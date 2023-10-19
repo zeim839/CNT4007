@@ -1,7 +1,7 @@
 #ifndef CNT4007_PROTOCOL_HPP
 #define CNT4007_PROTOCOL_HPP
 
-#include "system.h"
+#include "system.hpp"
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 
@@ -13,7 +13,7 @@
 struct MSG_HANDSHAKE
 {
 	Byte header[18];
-        Byte zeros[4];
+        Byte zeros[10];
 	Quad peerID;
 };
 
@@ -52,6 +52,6 @@ enum MSG_TYPE
  * ValidateHandshake returns whether a handshake message follows protocol
  * specifications. It does not check whether the PeerID is a valid neighbor.
  */
-bool ValidateHandshake(MSG_HANDSHAKE hs);
+bool validateHandshake(MSG_HANDSHAKE hs);
 
 #endif // CNT4007_PROTOCOL_HPP
