@@ -1,11 +1,5 @@
-SRC=$(wildcard *.cpp)
-OBJ=$(SRC:src/%.cpp=build/%.o)
-
-all: $(OBJ)
-	g++ -std=c++11 -Wall -I src/ -o build/proj1.out $^
-
-build/%.o: src/%.cpp
-	g++ $@ -c $<
+all: src/*.cpp main.cpp
+	g++ -std=c++11 -Wall -I./src -o build/proj1.out $^
 
 clean:
 	rm -f build.*.o
