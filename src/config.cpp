@@ -78,13 +78,6 @@ CFG_COMMON loadCommonConf(std::string path)
 	config.pieceSize = __extractInt(line, path, "PieceSize");
 	line.clear();
 
-	std::cout << config.numNeighbors << std::endl;
-	std::cout << config.unchokingInt << std::endl;
-	std::cout << config.optUnchokingInt << std::endl;
-	std::cout << config.fileName << std::endl;
-	std::cout << config.fileSize << std::endl;
-	std::cout << config.pieceSize << std::endl;
-
 	f.close();
 	return config;
 }
