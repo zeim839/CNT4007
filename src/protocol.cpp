@@ -1,12 +1,13 @@
 #include "protocol.hpp"
 
-bool ValidateHandshake(MSG_HANDSHAKE hs)
+bool validateHandshake(MSG_HANDSHAKE hs)
 {
-	std::string header(hs.header, 18);
+	std::string header((char*)hs.header, 18);
 	if (header != HANDSHAKE_HEADER)
 		return false;
 
-	for (int i = 0; i < hs.zeros; i++) {
+	// hs.zeros size == 10 bytes.
+	for (int i = 0; i < 10; i++) {
 		if (!hs.zeros[i])
 			continue;
 		return false;
@@ -109,7 +110,7 @@ void ConnectionHandler(int socket)
 	recv(socket, buff, sizeof(buff), 0);
 	send(socket, buff, sizeof(buff), 0);
 
-	if (!ValidateHandshake(Handshake())) {
+	if (!validateHandshake(Handshake())) {
 		return;
 	} //placeholder
 }

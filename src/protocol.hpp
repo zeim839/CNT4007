@@ -24,8 +24,8 @@
  */
 struct MSG_HANDSHAKE
 {
-	Byte header[19];
-    Byte zeros[4];
+	Byte header[18];
+        Byte zeros[10];
 	Quad peerID;
 };
 
@@ -64,7 +64,7 @@ enum MSG_TYPE
  * ValidateHandshake returns whether a handshake message follows protocol
  * specifications. It does not check whether the PeerID is a valid neighbor.
  */
-bool ValidateHandshake(MSG_HANDSHAKE hs);
+bool validateHandshake(MSG_HANDSHAKE hs);
 
 int EstablishServerSocket(int port);
 int EstablishClientSocket(char* hostname, int port);
