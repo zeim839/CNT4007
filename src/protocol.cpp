@@ -23,23 +23,21 @@ int EstablishServerSocket(int port)
 	address.sin_addr.s_addr = INADDR_ANY;
 	address.sin_port = htons(port);
 
-	int addrlen = sizeof(address)
-
 	// AF_INET = ipv4, SOCK_STREAM = tcp, 0 = ip
-	int socket = socket(AF_INET, SOCK_STREAM, 0);
-	if (socket == -1) {
+	int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+	if (serverSocket == -1) {
 		perror("socket failure");
-		close(socket);
+		close(serverSocket);
 		return -1;
 	}
 	
 	// connects the socket to the address
-	if (bind(socket, (struct sockaddr*)&address, (socklen_t*)&addrlen) == -1) {
+	if (bind(serverSocket, (struct sockaddr*)&address, sizeof(address)) == -1) {
 		perror("bind failure");
-		close(socket);
+		close(serverSocket);
 		return -1;
 	}
-	return socket;
+	return serverSocket;
 }
 
 void RecieveConnections(int serverSocket)
@@ -64,7 +62,7 @@ void RecieveConnections(int serverSocket)
 	}
 }
 
-int EstablishClientSocket(char* hostname, int port)
+int EstablishClientSocket(char* hostname, char* port)
 {
 	// dns lookup set up
 	struct addrinfo hints;
@@ -79,27 +77,28 @@ int EstablishClientSocket(char* hostname, int port)
 		return -1;
 	}
 
+	int clientSocket = -1;
 	//trying ips
 	for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
-		socket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-		if (socket == -1)
+		clientSocket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		if (clientSocket == -1)
 			continue;
 
 		//connected
-		if (connect(socket, rp->ai_addr, rp->ai_addrlen) != -1)
+		if (connect(clientSocket, rp->ai_addr, rp->ai_addrlen) != -1)
 			break;
 		
-		close(socket);
+		close(clientSocket);
 	}
 
 	freeaddrinfo(result);
 
-	if (socket == -1) {
+	if (clientSocket == -1) {
 		perror("establish connection failure");
 		return -1;
 	}
 
-	return socket;
+	return clientSocket;
 }
 
 //possibly used by both client and server relationship symetric?
@@ -117,5 +116,9 @@ void ConnectionHandler(int socket)
 
 MSG_HANDSHAKE Handshake(int socket) //Placeholder
 {
-
+	MSG_HANDSHAKE msg;
+	std::memset(&msg.header, 0, sizeof(msg.header));
+	std::memset(&msg.zeros, 0, sizeof(msg.zeros));
+	std::memset(&msg.peerID, 0, sizeof(msg.peerID));
+	return msg;
 }

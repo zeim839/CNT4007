@@ -1,7 +1,7 @@
 #ifndef CNT4007_PROTOCOL_HPP
 #define CNT4007_PROTOCOL_HPP
 
-#include "system.h"
+#include "system.hpp"
 #include <sys/socket.h> 
 #include <unistd.h>
 #include <netinet/in.h> 
@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 #include <netdb.h>
+#include <cstring>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 #define MAX_NEIGHBORS 3 // idk the final value
@@ -23,8 +24,8 @@
  */
 struct MSG_HANDSHAKE
 {
-	Byte header[18];
-        Byte zeros[4];
+	Byte header[19];
+    Byte zeros[4];
 	Quad peerID;
 };
 
@@ -66,7 +67,7 @@ enum MSG_TYPE
 bool ValidateHandshake(MSG_HANDSHAKE hs);
 
 int EstablishServerSocket(int port);
-int EstablishClientSocket(char* hostname, int port)
+int EstablishClientSocket(char* hostname, int port);
 void RecieveConnections(int serverSocket);
 void ConnectionHandler(int socket);
 MSG_HANDSHAKE Handshake();
