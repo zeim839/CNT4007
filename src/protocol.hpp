@@ -2,20 +2,10 @@
 #define CNT4007_PROTOCOL_HPP
 
 #include "system.hpp"
-#include <sys/socket.h> 
-#include <unistd.h>
-#include <netinet/in.h> 
-#include <stdio.h> 
-#include <stdlib.h>
-#include <arpa/inet.h>
-#include <thread>
-#include <vector>
-#include <netdb.h>
-#include <cstring>
+
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
-#define MAX_NEIGHBORS 3 // idk the final value
-#define BUFFER_SIZE 1024 // idk the final value
+
 
 /*
  * The handshake message consists of three parts: handshake header,
@@ -66,10 +56,6 @@ enum MSG_TYPE
  */
 bool validateHandshake(MSG_HANDSHAKE hs);
 
-int EstablishServerSocket(int port);
-int EstablishClientSocket(char* hostname, int port);
-void RecieveConnections(int serverSocket);
-void ConnectionHandler(int socket);
 MSG_HANDSHAKE Handshake();
 
 #endif // CNT4007_PROTOCOL_HPP
