@@ -19,12 +19,17 @@
 
 #include "tcp.hpp"
 
+// manages tcp connections
 class TCP
 {
-    private:
+    //will turn into struct eventually
     std::mutex bitfieldMutex;
-    std::vector<char*> bitfields; //placeholder until u know what kind of type bitfield is
-    std::vector<std::thread> connections;
+    std::mutex indexMutex;
+    std::mutex socketMutex;
+    std::vector<char*> bitfields; // placeholder until u know what kind of type bitfield is
+    std::vector<std::thread> connectionThreads;
+    std::vector<int> socketIndex;
+    std::map<const char*, int, cmp_char> connectionIndex;
     std::thread serverReciver;
     char* port;
     char* hostname;
@@ -63,6 +68,12 @@ class TCP
     void ConnectionHandler(int tcpSocket, int connectionNum);
 
     /*
+     * adds connection index to a peerid map to be able to reference
+     * bitmaps and threads from id
+     */
+    void addPeer(char* peer, int connectionIndex);
+
+    /*
      * when a server socket connects function adds bitfield to its
      * bitfield vector.
      */
@@ -81,11 +92,30 @@ class TCP
     bool connectToServerSocket(char* hostname, char* port);
 
     /*
-     * possible function to compare bitfields
+     * closes socket doesnt yet reindex the vectors, may switch to
+     * map with struct holding all data much simpler but concentrates shared
+     * resources maybe slower?
      */
-    void readBitfields();
+    bool closeConnection(char* peerID);
+    bool closeConnection(int connectionIndex);
+
+    /*
+     * copies bitfield into the destination array
+     */
+    char* getBitfield(char* destination, int connectionIndex);
+
+    /*
+     * takes peer id and returns connection index
+     */
+    int getConnectionIndex(char* peerID);
 };
 
-void ConnectionHandler(int tcp_socket);
+struct cmp_char
+{
+    bool operator()(char const *a, char const *b) const
+    {
+        return std::strcmp(a,b) < 0;
+    }
+};
 
 #endif

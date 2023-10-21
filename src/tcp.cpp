@@ -1,6 +1,5 @@
 #include "tcp.hpp"
 
-    
 int TCP::EstablishServerSocket()
 {
 	// server address config
@@ -30,10 +29,15 @@ void TCP::addConnection(int connectionSocket)
     //adds another spot to bitfield vector
     bitfieldMutex.lock();
     bitfields.resize(bitfields.size() + 1);
+	bitfieldMutex.unlock();
+
+	socketMutex.lock();
+	socketIndex.push_back(connectionSocket);
+	socketMutex.unlock();
     //pushes connection into vector should always stay alighed with bitfield
-    connections.push_back(std::move(
-        std::thread(ConnectionHandler, connectionSocket, connections.size())));
-    bitfieldMutex.unlock();
+    connectionThreads.push_back(std::move(
+        std::thread(ConnectionHandler, connectionSocket, connectionThreads.size())));
+    
 }
 
 void TCP::RecieveConnections()
@@ -96,18 +100,40 @@ void TCP::ConnectionHandler(int tcpSocket, int connectionNum)
 	char buff[BUFFER_SIZE] = {0};
 	recv(tcpSocket, buff, sizeof(buff), 0);
 	send(tcpSocket, buff, sizeof(buff), 0);
+
 	//if (!validateHandshake(Handshake())) {
     //    return;
 	//} // placeholder
+
+	char* peer = buff + 27;
+	addPeer(peer, connectionNum);
+
     recv(tcpSocket, buff, sizeof(buff), 0);
 	send(tcpSocket, buff, sizeof(buff), 0);
-    addBitfield(connectionNum, buff); // placeholder
+	
+	char type[1];
+	memcpy(buff + 3, type, 1);
+	if (atoi(type) != 5)
+	{
+		perror("second message not bitfield");
+		//do something
+	}
+
+    addBitfield(connectionNum, buff + 4); // placeholder needs to accept larger messages
 }
+
+void TCP::addPeer(char* peer, int connectionIndex)
+{
+	indexMutex.lock();
+	connectionIndex[peer] = connectionIndex;
+	indexMutex.unlock();
+}
+
 
 void TCP::addBitfield(int connectionNum, char* bitfield)
 {
     bitfieldMutex.lock();
-    this->bitfields.at(connectionNum) = bitfield; // placeholder to copy bitfield to array
+    strcpy(this->bitfields.at(connectionNum), bitfield); // placeholder to copy bitfield to array
     bitfieldMutex.unlock();
 }
 
@@ -129,9 +155,35 @@ bool TCP::connectToServerSocket(char* hostname, char* port)
     return true;
 }
 
-void TCP::readBitfields()
+bool TCP::closeConnection(char* peerID)
+{
+	return closeConnection(getConnectionIndex(peerID));
+}
+bool TCP::closeConnection(int connectionIndex)
+{
+	try {
+		close(socketIndex.at(connectionIndex));
+		//must add more to shift indexes? necessary?
+		return true;
+	} catch(const std::exception& e) {
+		perror(e.what());
+		return false;
+	}
+}
+
+char* TCP::getBitfield(char* destination, int connectionIndex)
 {
     bitfieldMutex.lock();
-    //placeholder
+    strcpy(destination, bitfields.at(connectionIndex));
     bitfieldMutex.unlock();
+	return destination;
+}
+
+int TCP::getConnectionIndex(char* peerID)
+{
+	int tempIndex = -1;
+    indexMutex.lock();
+    tempIndex = connectionIndex[peerID];
+    indexMutex.unlock();
+	return tempIndex;
 }
