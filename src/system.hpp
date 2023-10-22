@@ -8,6 +8,7 @@ typedef unsigned int  Quad;  // 4 bytes.
 
 // Assert that the condition is true, or throw an error and kill the
 // process.
+// TODO: Throw a catchable error instead of exiting.
 #define ASSERT(cond, ...)						\
 {								        \
 	if (!(cond)) {							\
@@ -23,6 +24,10 @@ typedef unsigned int  Quad;  // 4 bytes.
 #include <string>
 #include <fstream>
 #include <sstream>
-#include <vector>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <unistd.h>
 
 #endif // CNT4007_SYSTEM_HPP

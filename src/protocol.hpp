@@ -3,7 +3,9 @@
 
 #include "system.hpp"
 
+
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
+
 
 /*
  * The handshake message consists of three parts: handshake header,
