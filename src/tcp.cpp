@@ -36,7 +36,7 @@ void TCP::addConnection(int connectionSocket)
 	socketMutex.unlock();
     //pushes connection into vector should always stay alighed with bitfield
     connectionThreads.push_back(std::move(
-        std::thread(ConnectionHandler, connectionSocket, connectionThreads.size())));
+        std::thread(&TCP::ConnectionHandler, this, connectionSocket, connectionThreads.size())));
     
 }
 
@@ -143,7 +143,7 @@ TCP::TCP(char* hostname, char* port)
     this->port = port;
     this->serverListening = true;
     this->serverSocket = EstablishServerSocket();
-    this->serverReciver = std::thread(RecieveConnections);
+    this->serverReciver = std::thread(&TCP::RecieveConnections, this);
 }
 
 bool TCP::connectToServerSocket(char* hostname, char* port)

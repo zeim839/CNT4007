@@ -22,6 +22,17 @@
 // manages tcp connections
 class TCP
 {
+
+    // used to compare the char* in the map connectionIndex
+    struct cmp_char
+    {
+        bool operator()(char const *a, char const *b) const
+        {
+            return std::strcmp(a,b) < 0;
+        }
+    };
+
+
     //will turn into struct eventually
     std::mutex bitfieldMutex;
     std::mutex indexMutex;
@@ -108,14 +119,6 @@ class TCP
      * takes peer id and returns connection index
      */
     int getConnectionIndex(char* peerID);
-};
-
-struct cmp_char
-{
-    bool operator()(char const *a, char const *b) const
-    {
-        return std::strcmp(a,b) < 0;
-    }
 };
 
 #endif
