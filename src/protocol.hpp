@@ -56,6 +56,4 @@ enum MSG_TYPE
  */
 bool validateHandshake(MSG_HANDSHAKE hs);
 
-MSG_HANDSHAKE Handshake();
-
 #endif // CNT4007_PROTOCOL_HPP
