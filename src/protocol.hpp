@@ -3,9 +3,7 @@
 
 #include "system.hpp"
 
-
-#define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
-
+const char HANDSHAKE_HEADER[] = "P2PFILESHARINGPROJ";
 
 /*
  * The handshake message consists of three parts: handshake header,
@@ -17,6 +15,18 @@ struct MSG_HANDSHAKE
 	Byte header[18];
         Byte zeros[10];
 	Quad peerID;
+
+	/*
+	 * Convert a handshake message into a 32-byte buffer. Must be
+	 * deallocated after using.
+	 */
+	Byte* bytes();
+
+	/*
+	 * Convert a byte buffer to MSG_HANDSHAKE. The buffer must be at least
+	 * 32 bytes in length. Buffer will not be free()d.
+	 */
+	static MSG_HANDSHAKE fromBytes(Byte* buffer);
 };
 
 /*
