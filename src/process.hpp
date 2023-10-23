@@ -2,6 +2,7 @@
 #define CNT4007_PROCESS_HPP
 
 #include "system.hpp"
+#include "protocol.hpp"
 #include "config.hpp"
 #include "network.hpp"
 
@@ -17,7 +18,7 @@ public:
 	 * configs. Starts accepting connections immediately.
 	 * Throws if config or port are invalid.
 	 */
-	PeerProcess(unsigned int port, CFG_COMMON config,
+	PeerProcess(unsigned int id, unsigned int port, CFG_COMMON config,
 		    std::vector<CFG_PEER> peers);
 
 	/*
@@ -31,6 +32,9 @@ public:
 
 	// isClosed returns whether the PeerProcess is closed.
 	bool isClosed() { return this->_isClosed; }
+
+	// id returns this peer's peer ID.
+	unsigned int id() { return this->_id; }
 
 private:
 
@@ -56,6 +60,9 @@ private:
 	 */
 	void receiver(unsigned int id, Connection* conn);
 
+	// Establish a peer from the TCP connection.
+	bool establishPeer(Connection* conn);
+
 	// The peer common.cfg configuration.
 	CFG_COMMON _config;
 
@@ -71,11 +78,11 @@ private:
 	// Whether the peer is closed.
 	bool _isClosed = false;
 
+	// The peerProcess peer id.
+	unsigned int _id;
+
 	// Maps peer IDs to connection pointers.
 	std::unordered_map<unsigned int, Connection*> conns;
-
-	// Maps peer IDs to CFG_PEER variables.
-	std::unordered_map<unsigned int, CFG_PEER> peerConfigs;
 
 	// TODO: bitfields.
 
