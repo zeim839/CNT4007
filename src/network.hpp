@@ -23,19 +23,19 @@ public:
 	static Connection* accept(int socket);
 
 	/*
-	 * Transmit data to the connected peer, returns whether the
-	 * data was successfully transmitted. Buffer is the data to
-	 * transmit, len is the length of the buffer array.
+	 * Transmit data to the connected peer, returns the number of
+	 * bytes transmitted. If -1, the connection failed. Buffer is
+	 * the data to transmit, len is the length of the buffer array.
 	 */
-	bool transmit(const Byte buffer[], unsigned int len);
+	int transmit(const Byte buffer[], unsigned int len);
 
 	/*
 	 * Blocks until a message is received, then writes up to
 	 * max_len - 1 bytes to buffer. The written buffer data is
-	 * null-terminated. Returns whether data was successfully
-	 * received.
+	 * null-terminated. Returns the number of bytes received.
+	 * If -1, the connection terminated.
 	 */
-	bool receive(Byte buffer[], unsigned int max_len);
+	int receive(Byte buffer[], unsigned int max_len);
 
 	/*
 	 * Close the connection. Once a server is closed, it cannot be

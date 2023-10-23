@@ -43,35 +43,30 @@ Connection::Connection(int socket)
 Connection* Connection::accept(int socket)
 { return new Connection(socket); }
 
-bool Connection::transmit(const Byte buffer[], unsigned int len)
+int Connection::transmit(const Byte buffer[], unsigned int len)
 {
 	if (this->isClosed() || len == 0)
-		return false;
+		return 0;
 
-	ssize_t sent_bytes = send(this->_socket, buffer, len, 0);
-	if (sent_bytes == -1) {
-		this->close();
-		return false;
-	}
+	int sent_bytes = send(this->_socket, buffer, len, 0);
+	if (sent_bytes == -1) this->close();
 
-	return true;
+	return sent_bytes;
 }
 
-bool Connection::receive(Byte buffer[], unsigned int max_len)
+int Connection::receive(Byte buffer[], unsigned int max_len)
 {
 	if (this->isClosed() || max_len == 0)
 		return false;
 
 	// Wait for data to arrive.
-	ssize_t received_bytes = recv(this->_socket, buffer, max_len - 1, 0);
-	if (received_bytes == -1 || received_bytes == 0) {
+	int received_bytes = recv(this->_socket, buffer, max_len - 1, 0);
+	if (received_bytes == -1 || received_bytes == 0)
 		this->close();
-		return false;
-	}
 
 	// Null-terminate the received data.
 	buffer[received_bytes] = '\0';
-	return true;
+	return received_bytes + 1;
 }
 
 void Connection::close()
