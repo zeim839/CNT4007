@@ -1,5 +1,5 @@
 all: src/*.cpp main.cpp
-	g++ -std=c++11 -Wall -I./src -o build/proj1.out $^
+	g++ -std=c++11 -Wall -pthread -I./src -o build/proj1.out $^
 
 clean:
 	rm -f build/*.o

@@ -1,23 +1,15 @@
 #include <system.hpp>
 #include <network.hpp>
+#include <process.hpp>
 
 int main()
 {
 	// Start TCP server.
-	Server srv(3000);
+	CFG_COMMON config;
+	std::vector<CFG_PEER> peers;
+	PeerProcess p(3000, config, peers);
 	std::cout << "server listening on port 3000" << std::endl;
-	while (true) {
-		Connection* conn = srv.listen();
-		std::cout << "incoming connection" << std::endl;
+	p.terminate();
 
-		// 1 KB message buffer.
-		Byte buffer[1024];
-
-		// Receive message.
-		while (conn->receive(buffer, 1024)) {
-			std::string str((char*)buffer);
-			std::cout << "message from peer: " << str << std::endl;
-		}
-	}
 	return 0;
 }

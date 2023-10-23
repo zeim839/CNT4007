@@ -29,5 +29,8 @@ typedef unsigned int  Quad;  // 4 bytes.
 #include <netinet/in.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <thread>
+#include <mutex>
+#include <unordered_map>
 
 #endif // CNT4007_SYSTEM_HPP
