@@ -32,5 +32,7 @@ typedef unsigned int  Quad;  // 4 bytes.
 #include <thread>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
+#include <cstring>
 
 #endif // CNT4007_SYSTEM_HPP
