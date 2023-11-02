@@ -1,6 +1,5 @@
 all: src/*.cpp main.cpp
-	g++ -std=c++11 -Wall -pthread -I./src -o build/proj1.out $^
+	g++ -std=c++11 -Wall -pthread -I./src -o peerProcess $^
 
 clean:
-	rm -f build/*.o
-	rm build/proj1.out
+	rm -f *.o

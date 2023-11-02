@@ -48,7 +48,8 @@ inline std::string __extractStr
 CFG_COMMON loadCommonConf(std::string path)
 {
 	std::ifstream f(path);
-	ASSERT(f.is_open(), "(%s) failed to read file", path.c_str());
+	ASSERT(f.is_open(), "(%s) expected common.cfg config file in "
+	       "current working directory", path.c_str());
 
 	CFG_COMMON config;
 	std::string line;

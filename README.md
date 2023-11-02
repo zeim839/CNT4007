@@ -14,15 +14,15 @@ whilst peer hosts/ports are specified in a PeerInfo.cfg file.
 ## Build
 Run the following in a terminal, while inside the Git repository root folder:
 ```bash
-mkdir build
 make
 ```
 
 ## Usage
 Run the following in a terminal, while inside the Git repository root folder:
 ```bash
-./build/proj1.out
+./peerProcess [peer-id]
 ```
+Where [peer-id] is the peer's ID (unsigned integer). For example: `./peerProcess 1001`.
 
 ## Configuration
 ### Example: common.cfg

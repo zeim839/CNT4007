@@ -30,6 +30,7 @@
 *.exe
 *.out
 *.app
+peerProcess
 
 # Other
 .DS_Store
