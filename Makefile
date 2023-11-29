@@ -1,5 +1,5 @@
 all: src/*.cpp main.cpp
-	g++ -std=c++11 -Wall -pthread -I./src -o peerProcess $^
+	g++ -std=c++20 -Wall -pthread -I./src -o peerProcess $^
 
-clean:
-	rm -f *.o
+debug: src/*.cpp main.cpp
+	g++ -std=c++20 -g -Wall -pthread -I./src -o peerProcess $^
