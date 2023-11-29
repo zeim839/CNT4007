@@ -1,0 +1,505 @@
+#include "PeerProcess.hpp"
+
+PeerProcess::PeerProcess(unsigned int peerid)
+{
+	this->peerid = peerid;
+
+	// Load Common.cfg.
+	this->cfgCommon = FileSystem::loadCommonConfig("Common.cfg");
+
+	// Load peers.
+	this->cfgPeers = FileSystem::loadPeerConfig("PeerInfo.cfg");
+
+	// Initialize peer table.
+	bool foundSelf = false;
+	bool selfHasFile = false;
+	for (auto itr = this->cfgPeers.begin(); itr != this->cfgPeers.end(); ++itr) {
+		if (itr->peerid == this->peerid) {
+			foundSelf = true;
+			selfHasFile = itr->hasFile;
+			this->port = itr->port;
+			continue;
+		}
+
+		if (peerTable.contains(itr->peerid)) {
+			throw std::runtime_error("Duplicate peer entry: " +
+                            std::to_string(itr->peerid));
+		}
+
+		PeerTableEntry entry;
+		entry.peerid = itr->peerid;
+		entry.hostname = itr->hostname;
+		entry.port = itr->port;
+		this->peerTable[itr->peerid] = entry;
+	}
+
+	if (!foundSelf) {
+		throw std::runtime_error("could not find self (id: " +
+                        std::to_string(this->peerid) + ") in PeerInfo.cfg");
+	}
+
+	if (selfHasFile) {
+		this->selfFinished = true;
+		this->file = FileSystem::loadSharedFile(this->cfgCommon.fileName,
+                        this->cfgCommon.pieceSize);
+	}
+
+	// Calculate upper boundary of number of pieces.
+	this->numPieces = ((float)this->cfgCommon.fileSize /
+                (float)this->cfgCommon.pieceSize) + 0.5f;
+
+	// Initialize file.
+	this->file = (!this->file) ? new unsigned char*[this->numPieces]
+		: this->file;
+
+	if (!selfHasFile)
+		memset(&this->file, NULL, this->numPieces);
+
+	// Initialize interface.
+	this->ifc.setIsChoking = std::bind(&PeerProcess::setIsChoking,
+                this, std::placeholders::_1, std::placeholders::_2);
+
+	this->ifc.setIsInterested = std::bind(&PeerProcess::setIsInterested,
+                this, std::placeholders::_1, std::placeholders::_2);
+
+	this->ifc.setPeerHas = std::bind(&PeerProcess::setPeerHas,
+                this, std::placeholders::_1, std::placeholders::_2);
+
+	this->ifc.setBitfield = std::bind(&PeerProcess::setBitfield,
+                this, std::placeholders::_1, std::placeholders::_2);
+
+	this->ifc.requestedPiece = std::bind(&PeerProcess::requestedPiece,
+                this, std::placeholders::_1, std::placeholders::_2);
+
+	this->ifc.receivedPiece = std::bind(&PeerProcess::receivedPiece,
+                this, std::placeholders::_1, std::placeholders::_2);
+
+	// Start server thread.
+	this->thServer = std::thread(&PeerProcess::server, this);
+
+	// TODO: Start discovery thread.
+	this->thDiscover = std::thread(&PeerProcess::discover, this);
+
+	// TODO: Start optimistic peer thread.
+
+	// TODO: start unchoke peers thread.
+
+	// TODO: start downloader thread.
+	// TODO: (downloader) Make sure we're not being choked
+
+	// Wait for child threads.
+	this->thServer.join();
+	this->thDiscover.join();
+
+	// Finished. Start cleanup.
+	this->terminate();
+}
+
+PeerProcess::~PeerProcess()
+{
+	// TODO
+}
+
+void PeerProcess::server()
+{
+	sockaddr_in servAddr;
+	bzero((char*)&servAddr, sizeof(servAddr));
+	servAddr.sin_family = AF_INET;
+	servAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servAddr.sin_port = htons(this->port);
+
+	// Open TCP connection.
+	int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+	if (serverSocket < 0)
+		throw std::runtime_error("could not establish server socket");
+
+	// Bind socket to local address.
+	int bindStatus = bind(serverSocket, (struct sockaddr*)&servAddr,
+                sizeof(servAddr));
+
+	if (bindStatus < 0) {
+		throw std::runtime_error("could not bind socket to given peer"
+                        " port and hostname");
+	}
+
+	// Maintain up to 5 incoming connection requests at a time.
+	listen(serverSocket, 5);
+
+	while (!this->isFinished()) {
+		sockaddr_in inAddr;
+		socklen_t inAddrSize = sizeof(inAddr);
+		int inSocket = accept(serverSocket, (sockaddr*)&inAddr,
+                        &inAddrSize);
+
+		if (inSocket < 0)
+			continue;
+
+		this->xchgHandshakes(inSocket);
+	}
+}
+
+void PeerProcess::discover()
+{
+	while(!this->isFinished()) {
+		for (auto i = cfgPeers.begin(); i != cfgPeers.end(); ++i) {
+			/*
+			 * We are iterating cfgPeers, so expect to see
+			 * our current peer.
+			 */
+			if (i->peerid == this->peerid)
+				continue;
+
+			if (this->peerTable[i->peerid].cntrl || this->peerTable[i->peerid].isFinished)
+				continue;
+
+			// Resolve peer hostname.
+			sockaddr_in addr;
+			hostent* info = gethostbyname(i->hostname.c_str());
+			if (!info)
+				continue;
+
+			// Create dialing socket.
+			int sout = socket(AF_INET, SOCK_STREAM, 0);
+			if (sout < 0)
+				continue;
+
+			if (fcntl(sout, F_SETFL, O_NONBLOCK) < 0) {
+				::close(sout);
+				continue;
+			}
+
+			// Set up peer address structure.
+			bzero((char*)&addr, sizeof(addr));
+			addr.sin_family = AF_INET;
+			bcopy((char*)info->h_addr, (char*)&addr.sin_addr.s_addr,
+			      info->h_length);
+			addr.sin_port = htons(i->port);
+
+			// Connect to server.
+			int conn = connect(sout, (struct sockaddr*)&addr,
+                                sizeof(addr));
+
+			if (conn < 0 && errno == EINPROGRESS) {
+				timeval tv;
+				tv.tv_sec = 2; // Wait up to 2 seconds.
+				tv.tv_usec = 0;
+
+				fd_set fdset;
+				FD_ZERO(&fdset);
+				FD_SET(sout, &fdset);
+
+				conn = select(sout + 1, NULL, &fdset, NULL, &tv);
+
+                                // An error occurred or select timed out.
+				if (conn <= 0) {
+					::close(sout);
+					continue;
+				}
+
+			} else if (conn < 0) {
+				::close(sout);
+				continue;
+			}
+
+			// Check for socket-level errors.
+			int opt = 1;
+			socklen_t len = sizeof(opt);
+			if (getsockopt (sout, SOL_SOCKET, SO_ERROR, &opt, &len) < 0) {
+				::close(sout);
+				continue;
+			}
+
+			// there was an error
+			if (opt) {
+				::close(sout);
+				continue;
+			}
+
+			// Set socket back to blocking mode
+			fcntl(sout, F_SETFL, 0);
+
+			// Exchange handshakes.
+			this->xchgHandshakes(sout);
+		}
+	}
+}
+
+void PeerProcess::xchgHandshakes(int socket)
+{
+	// Proactively send handshake.
+	std::string hsMsg = "P2PFILESHARINGPROJ0000000000" + std::to_string(this->peerid);
+	int sentHandshake = send(socket, hsMsg.c_str(), hsMsg.size(), 0);
+	if (sentHandshake < 0) {
+		::close(socket);
+		return;
+	}
+
+	/*
+	 * Set deadline (1500ms) for incoming handshake, otherwise any
+	 * other waiting peers will be indefinitely starved.
+	 */
+	pollfd pfd;
+	pfd.fd = socket;
+	pfd.events = POLLIN;
+
+	if (poll(&pfd, 1, 1500) <= 0) {
+		::close(socket);
+		return;
+	}
+
+	// Await incoming handshake.
+	// TODO: This might be problematic if the message arrives in
+	// multiple parts.
+	char* buffer[32];
+	int rcvd = recv(socket, &buffer, 32, 0);
+	if (rcvd < 32) {
+		::close(socket);
+		return;
+	}
+
+	// Marshall message.
+	HandshakeMsg inHsMsg;
+	inHsMsg.header = std::string((const char*)buffer, 18);
+	memcpy(&inHsMsg.zeros, buffer + 18, 10);
+
+	// Last 4 bytes are the integer representation (i.e. string).
+	std::string peeridStr((const char*)buffer + 28, 4);
+
+	// Convert to integer.
+	try { inHsMsg.peerid = std::stoi(peeridStr); } catch (...) {
+		::close(socket);
+		return;
+	}
+
+	if (inHsMsg.header != HANDSHAKE_HEADER) {
+		::close(socket);
+		return;
+	}
+
+	bool allZeros = true;
+	for (int i = 0; i < 10; i++) {
+		if (inHsMsg.zeros[i] != 0) {
+			allZeros = false;
+			break;
+		}
+	}
+
+	if (!allZeros) {
+		::close(socket);
+		return;
+	}
+
+	// PeerID should be known.
+	if (!this->peerTable.contains(inHsMsg.peerid)) {
+		::close(socket);
+		return;
+	}
+
+	this->mu.lock();
+
+	// Connection is being re-established.
+	if (this->peerTable[inHsMsg.peerid].cntrl) {
+		this->peerTable[inHsMsg.peerid].cntrl->close();
+		delete this->peerTable[inHsMsg.peerid].cntrl;
+		this->peerTable[inHsMsg.peerid].cntrl = NULL;
+	}
+
+	this->peerTable[inHsMsg.peerid].cntrl = new PeerController
+		(inHsMsg.peerid, socket, this->ifc);
+
+	// Send bitfield.
+	this->peerTable[inHsMsg.peerid].cntrl->sendBitfield
+		(this->getBitfield());
+
+	this->mu.unlock();
+}
+
+void PeerProcess::setIsChoking(unsigned int peerid, bool isChoking)
+{
+	this->mu.lock();
+	if (this->peerTable.contains(peerid))
+		this->peerTable[peerid].isChoking = isChoking;
+
+	this->mu.unlock();
+}
+
+void PeerProcess::setIsInterested(unsigned int peerid, bool isInterested)
+{
+	this->mu.lock();
+	if (this->peerTable.contains(peerid))
+		this->peerTable[peerid].isInterested = isInterested;
+
+	this->mu.unlock();
+}
+
+void PeerProcess::setPeerHas(unsigned int peerid, unsigned int filepiece)
+{
+	this->mu.lock();
+	if (!this->peerTable.contains(peerid)) {
+		this->mu.unlock();
+		return;
+	}
+
+	this->peerTable[peerid].bitmap[filepiece] = true;
+	if (!this->file[filepiece])
+		this->peerTable[peerid].cntrl->sendInterested();
+
+	this->mu.unlock();
+}
+
+void PeerProcess::setBitfield(unsigned int peerid, std::string bitfield)
+{
+	this->mu.lock();
+	if (!this->peerTable.contains(peerid)) {
+		this->mu.unlock();
+		return;
+	}
+
+	unsigned int i = 0;
+	bool isInteresting = false;
+	for (auto itr = bitfield.begin(); itr != bitfield.end(); ++itr) {
+		this->peerTable[peerid].bitmap[i] = ((unsigned char)(*itr) == 1);
+		if (!this->file[i++]) {
+			isInteresting = true;
+		}
+	}
+
+	if (isInteresting)
+		this->peerTable[peerid].cntrl->sendInterested();
+
+	this->mu.unlock();
+}
+
+void PeerProcess::requestedPiece(unsigned int peerid, unsigned int filePiece)
+{
+	this->mu.lock();
+	if (!this->peerTable.contains(peerid) || filePiece > this->numPieces) {
+		this->mu.unlock();
+		return;
+	}
+
+	if (this->peerTable[peerid].isChoked || !this->file[filePiece]) {
+		this->mu.unlock();
+		return;
+	}
+
+	unsigned char piece[this->cfgCommon.pieceSize];
+	memcpy(piece, this->file + filePiece, sizeof(piece));
+	std::string pieceStr((const char*)piece);
+
+	this->peerTable[peerid].cntrl->sendPiece(pieceStr);
+	this->mu.unlock();
+}
+
+void PeerProcess::receivedPiece(unsigned int peerid, std::string piece)
+{
+	this->mu.lock();
+	if (!this->peerTable.contains(peerid) ||
+	    piece.size() < 4 + this->cfgCommon.pieceSize) {
+		this->mu.unlock();
+		return;
+	}
+
+	unsigned char* pieceRaw = (unsigned char*)piece.c_str();
+	unsigned int pieceNum;
+	memcpy(&pieceNum, pieceRaw, 4);
+	if (this->file[pieceNum]) {
+		this->mu.unlock();
+		return;
+	}
+
+	unsigned char* dynPiece = new unsigned char[this->cfgCommon.pieceSize];
+	memcpy(&dynPiece, pieceRaw + 4, this->cfgCommon.pieceSize);
+	this->file[pieceNum] = dynPiece;
+	this->mu.unlock();
+
+	// Broadcast that we have received a piece.
+	this->broadcastHavePiece(pieceNum);
+}
+
+// WARNING: must be called inside a mutex lock.
+std::string PeerProcess::getBitfield()
+{
+	if (!this->file) {
+		throw std::runtime_error("attempted to read uninitialized "
+                        "bitfield");
+	}
+
+	std::string bitfield = "";
+	for (int i = 0; i < this->numPieces; ++i) {
+		if (this->file[i]) {
+			bitfield.push_back((unsigned char)1);
+			continue;
+		}
+		bitfield.push_back((unsigned char)0);
+	}
+	return bitfield;
+}
+
+bool PeerProcess::isFinished()
+{
+	this->mu.lock();
+
+	// Check if all peers have the file.
+	bool hasUnfinished = false;
+	for (auto itr = this->peerTable.begin(); itr != this->peerTable.end(); ++itr) {
+		if (itr->second.isFinished)
+			continue;
+
+		bool peerHasUnfinished = false;
+		for (int i = 0; i < this->numPieces; ++i) {
+			if (!itr->second.bitmap[i]) {
+				hasUnfinished = true;
+				peerHasUnfinished = true;
+				break;
+			}
+		}
+
+		itr->second.isFinished = (!peerHasUnfinished);
+	}
+
+	if (hasUnfinished) {
+		this->mu.unlock();
+		return false;
+	}
+
+	// Check if our peer has all file pieces.
+	if (this->selfFinished) {
+		this->mu.unlock();
+		return true;
+	}
+
+	bool haveAllPieces = true;
+	for (int i = 0; i < this->numPieces; ++i) {
+		if (this->file[i] == NULL) {
+			haveAllPieces = false;
+			break;
+		}
+	}
+
+	if (!haveAllPieces) {
+		this->mu.unlock();
+		return false;
+	}
+
+	this->selfFinished = true;
+	this->mu.unlock();
+
+	return true;
+}
+
+void PeerProcess::terminate()
+{
+	// TODO.
+}
+
+void PeerProcess::broadcastHavePiece(unsigned int piece)
+{
+	this->mu.lock();
+	for (auto itr = this->peerTable.begin(); itr != this->peerTable.end(); ++itr) {
+		if (itr->second.cntrl)
+			itr->second.cntrl->sendHave(piece);
+	}
+
+	this->mu.unlock();
+}
