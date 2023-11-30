@@ -52,8 +52,9 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	this->file = (!this->file) ? new unsigned char*[this->numPieces]
 		: this->file;
 
-	if (!selfHasFile)
-		memset(&this->file, NULL, this->numPieces);
+	// If we don't have the file, set each piece pointer to NULL.
+	for (unsigned int i = 0; (i < this->numPieces && !selfHasFile); ++i)
+		this->file[i] = NULL;
 
 	// Initialize interface.
 	this->ifc.setIsChoking = std::bind(&PeerProcess::setIsChoking,
@@ -74,7 +75,7 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	this->ifc.receivedPiece = std::bind(&PeerProcess::receivedPiece,
                 this, std::placeholders::_1, std::placeholders::_2);
 
-	// Start server thread.
+        // Start server thread.
 	this->thServer = std::thread(&PeerProcess::server, this);
 
 	// TODO: Start discovery thread.
@@ -149,8 +150,18 @@ void PeerProcess::discover()
 			if (i->peerid == this->peerid)
 				continue;
 
-			if (this->peerTable[i->peerid].cntrl || this->peerTable[i->peerid].isFinished)
+			if (this->peerTable[i->peerid].isFinished)
 				continue;
+
+			if (this->peerTable[i->peerid].cntrl) {
+				if (this->peerTable[i->peerid].cntrl->isClosed()) {
+					this->mu.lock();
+					delete this->peerTable[i->peerid].cntrl;
+					this->peerTable[i->peerid].cntrl = NULL;
+					this->mu.unlock();
+				}
+				continue;
+			}
 
 			// Resolve peer hostname.
 			sockaddr_in addr;
@@ -226,10 +237,15 @@ void PeerProcess::discover()
 
 void PeerProcess::xchgHandshakes(int socket)
 {
+	signal(SIGPIPE, SIG_IGN);
+
 	// Proactively send handshake.
-	std::string hsMsg = "P2PFILESHARINGPROJ0000000000" + std::to_string(this->peerid);
+	const char zeros[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	std::string hsMsg = "P2PFILESHARINGPROJ" + std::string(zeros, 10) +
+		std::to_string(this->peerid);
+
 	int sentHandshake = send(socket, hsMsg.c_str(), hsMsg.size(), 0);
-	if (sentHandshake < 0) {
+	if (sentHandshake < 0 || errno == EPIPE) {
 		::close(socket);
 		return;
 	}
@@ -250,9 +266,9 @@ void PeerProcess::xchgHandshakes(int socket)
 	// Await incoming handshake.
 	// TODO: This might be problematic if the message arrives in
 	// multiple parts.
-	char* buffer[32];
+	char buffer[32];
 	int rcvd = recv(socket, &buffer, 32, 0);
-	if (rcvd < 32) {
+	if (rcvd < 32 || errno == EPIPE) {
 		::close(socket);
 		return;
 	}
@@ -297,11 +313,11 @@ void PeerProcess::xchgHandshakes(int socket)
 
 	this->mu.lock();
 
-	// Connection is being re-established.
+	// Connection has already been established.
 	if (this->peerTable[inHsMsg.peerid].cntrl) {
-		this->peerTable[inHsMsg.peerid].cntrl->close();
-		delete this->peerTable[inHsMsg.peerid].cntrl;
-		this->peerTable[inHsMsg.peerid].cntrl = NULL;
+		this->mu.unlock();
+		::close(socket);
+		return;
 	}
 
 	this->peerTable[inHsMsg.peerid].cntrl = new PeerController
@@ -358,9 +374,13 @@ void PeerProcess::setBitfield(unsigned int peerid, std::string bitfield)
 	unsigned int i = 0;
 	bool isInteresting = false;
 	for (auto itr = bitfield.begin(); itr != bitfield.end(); ++itr) {
-		this->peerTable[peerid].bitmap[i] = ((unsigned char)(*itr) == 1);
-		if (!this->file[i++]) {
-			isInteresting = true;
+		for (int k = 0; k < 8; ++k) {
+			unsigned char bit = (unsigned char)(*itr) & (1 << (7-k));
+			this->peerTable[peerid].bitmap[i] = (bit == 1);
+			if (this->peerTable[peerid].bitmap[i] && !this->file[i]) {
+				isInteresting = true;
+			}
+			++i;
 		}
 	}
 
@@ -425,14 +445,26 @@ std::string PeerProcess::getBitfield()
                         "bitfield");
 	}
 
+	unsigned int bytes = ((float)this->numPieces / 8.0f) + 0.5f;
 	std::string bitfield = "";
-	for (int i = 0; i < this->numPieces; ++i) {
-		if (this->file[i]) {
-			bitfield.push_back((unsigned char)1);
+	unsigned char byte = 0;
+	unsigned int j = 0;
+
+	for (unsigned int i = 0; i < this->numPieces; ++i) {
+		if (j == 8) {
+			bitfield.push_back(byte);
+			byte = 0;
+			j = 0;
 			continue;
 		}
-		bitfield.push_back((unsigned char)0);
+
+		byte = (this->file[i]) ? (byte | (1 << (7 - j))) : byte;
+		++j;
 	}
+
+	if (bitfield.size() < bytes)
+		bitfield.push_back(byte);
+
 	return bitfield;
 }
 
@@ -447,7 +479,7 @@ bool PeerProcess::isFinished()
 			continue;
 
 		bool peerHasUnfinished = false;
-		for (int i = 0; i < this->numPieces; ++i) {
+		for (unsigned int i = 0; i < this->numPieces; ++i) {
 			if (!itr->second.bitmap[i]) {
 				hasUnfinished = true;
 				peerHasUnfinished = true;
@@ -470,7 +502,7 @@ bool PeerProcess::isFinished()
 	}
 
 	bool haveAllPieces = true;
-	for (int i = 0; i < this->numPieces; ++i) {
+	for (unsigned int i = 0; i < this->numPieces; ++i) {
 		if (this->file[i] == NULL) {
 			haveAllPieces = false;
 			break;
