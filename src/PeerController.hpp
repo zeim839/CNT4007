@@ -84,9 +84,6 @@ private:
 	 */
 	PeerInterface ifc;
 
-	// The listen() thread.
-	std::thread listener;
-
 	/*
 	 * Will wait for a message of the specified size to arrive, as
 	 * long as the connection remains open. If the message is

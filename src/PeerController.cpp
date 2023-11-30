@@ -10,9 +10,14 @@ PeerController::PeerController(unsigned int peerid, int fd, PeerInterface ifc)
 		return;
 
 	// Spawn listener thread.
-	this->listener = std::thread(&PeerController::listen, this);
+	std::thread(&PeerController::listen, this).detach();
 }
 
+/*
+ * TODO: closing this does not stop the detached listener thread. So
+ * if the PeerController is deleted and listen() calls isClosed(),
+ * then a segmentation fault is raised.
+ */
 void PeerController::close()
 {
 	this->closing.lock();
@@ -23,11 +28,6 @@ void PeerController::close()
 
 	::close(this->socket);
 	this->closed = true;
-
-	// Wait for thread to finish.
-	if (this->listener.joinable())
-		this->listener.join();
-
 	this->closing.unlock();
 }
 
@@ -39,7 +39,8 @@ void PeerController::listen()
 		if (!this->receive(buffer, 5))
 			continue;
 
-		unsigned char* rawBuffer = (unsigned char*)buffer.c_str();
+		const char* rawBuffer = buffer.c_str();
+
 		GenericMsg msg;
 		memcpy(&msg.length, rawBuffer, 4);
 		memcpy(&msg.msgtype, rawBuffer + 4, 1);
@@ -101,6 +102,7 @@ void PeerController::listen()
 bool PeerController::receive(std::string& out, unsigned int size)
 {
 	// Need to poll to ensure thread doesn't wait forever.
+	signal(SIGPIPE, SIG_IGN);
 	int remaining = size;
 	while (!this->isClosed() && remaining > 0) {
 		pollfd pfd;
@@ -111,9 +113,9 @@ bool PeerController::receive(std::string& out, unsigned int size)
 		if (poll(&pfd, 1, 250) <= 0)
 			continue;
 
-		char* buffer[size];
-		int rcvd = recv(this->socket, &buffer, sizeof(buffer), 0);
-		if (rcvd <= 0) {
+		char* buffer[remaining];
+		int rcvd = recv(this->socket, &buffer, remaining, 0);
+		if (rcvd <= 0 || errno == EPIPE) {
 			this->close();
 			return false;
 		}
@@ -123,29 +125,30 @@ bool PeerController::receive(std::string& out, unsigned int size)
 		remaining -= rcvd;
 	}
 
-	return false;
+	return true;
 }
 
 bool PeerController::sendMsg(GenericMsg msg, std::string payload)
 {
+	signal(SIGPIPE, SIG_IGN);
+
 	if (this->isClosed())
 		return false;
 
 	if (payload.size() != (msg.length - 1))
 		return false;
 
-	char* msgFull = new char[sizeof(msg) + msg.length - 1];
-	memcpy(msgFull, &msg.length, 4);
-	memcpy(msgFull + 4, &msg.msgtype, 1);
+	std::string msgFull = std::string((const char*)&msg.length, 4) +
+	        std::string((const char*)&msg.msgtype, 1);
+
 	if (msg.length > 1) {
-		const char* rawPayload = payload.c_str();
-		memcpy(msgFull + 5, rawPayload, msg.length - 1);
+		msgFull += payload;
 	}
 
-	int sent = ::send(this->socket, msgFull, sizeof(msg) + msg.length - 1, 0);
-	delete[] msgFull;
+	int sent = ::send(this->socket, msgFull.c_str(),
+                sizeof(msg) + msg.length - 1, 0);
 
-	if (sent < 0) {
+	if (sent < 0 || errno == EPIPE) {
 		this->close();
 		return false;
 	}

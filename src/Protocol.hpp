@@ -21,6 +21,8 @@
 #include <netdb.h>
 #include <iostream>
 #include <fcntl.h>
+#include <signal.h>
+#include <errno.h>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 
