@@ -51,6 +51,8 @@ private:
 	// Concurrent routines.
 	void server();
 	void discover();
+	void optimistic();
+	 
 
 	// Threads.
 	std::thread thServer;

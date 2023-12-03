@@ -235,6 +235,59 @@ void PeerProcess::discover()
 	}
 }
 
+void PeerProcess::optimistic()
+{
+	PeerTableEntry *optimisticPeer = nullptr;
+	
+	while(!this->isFinished()) {
+
+		// vector of choked and interested peers
+		this->mu.lock();
+		std::vector<PeerTableEntry *> interestedChoked;
+        for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
+        	if (it->second.isChoked && it->second.isInterested) {
+        	    interestedChoked.push_back(&it->second);
+        	}
+		}
+		this->mu.unlock();
+
+		// if no interested choked peers sleep
+		if (interestedChoked.empty()) {
+			std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon
+			.optimisticUnchokingInterval));
+			continue;
+		}
+
+		// randomly pick interested choked peer
+		std::random_device rd;
+		std::mt19937 gen(rd());
+		std::uniform_int_distribution<size_t> dist(0, interestedChoked.size() - 1);
+		size_t index = dist(gen);
+
+		// if current optPeer is different from new pick again
+		if (optimisticPeer == interestedChoked[index]) {
+			continue;
+		}
+
+		// choke old optimist
+		if (!optimisticPeer->isChoked) {
+			optimisticPeer->cntrl->sendChoke();
+		}
+
+		optimisticPeer = interestedChoked[index];
+
+		// unchokes peer for interval
+		if (optimisticPeer!= nullptr && optimisticPeer->isChoked 
+		&& optimisticPeer->isInterested) {
+			optimisticPeer->cntrl->sendUnchoke();
+			std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon
+			.optimisticUnchokingInterval));
+		}
+	}
+
+
+}
+
 void PeerProcess::xchgHandshakes(int socket)
 {
 	signal(SIGPIPE, SIG_IGN);
@@ -535,3 +588,4 @@ void PeerProcess::broadcastHavePiece(unsigned int piece)
 
 	this->mu.unlock();
 }
+
