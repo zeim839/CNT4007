@@ -1,6 +1,4 @@
 #include "FileSystem.hpp"
-#include <stdexcept>
-#include <string>
 
 bool isNumber(const std::string& str)
 {
@@ -13,14 +11,15 @@ std::pair<std::string, std::string> getCommonLine(std::ifstream& fin)
 	std::string key = "";
 	std::string val = "";
 	std::string* current = &key;
+	int c = -1;
 	while(fin.good()) {
-		char c = fin.get();
+	        c = fin.get();
 		if (c == ' ') {
 			current = &val;
 			continue;
 		}
 
-		if (c == '\n')
+		if (c == '\n' || c == EOF)
 			break;
 
 		current->push_back(c);
@@ -217,6 +216,15 @@ unsigned char** FileSystem::loadSharedFile(std::string path, unsigned int pieceS
 		}
 		currentPiece.push_back(fin.get());
 	}
+
+	if (currentPiece != "") {
+		while (pieceSize > currentPiece.size()) {
+			currentPiece.push_back(0);
+		}
+		pieces.push_back(currentPiece);
+	}
+
+	std::cout << "Number of pieces loaded: " << pieces.size() << std::endl;
 
 	unsigned int i = 0;
 	unsigned char** out = new unsigned char*[pieces.size()];
