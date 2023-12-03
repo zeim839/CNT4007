@@ -202,7 +202,7 @@ unsigned char** FileSystem::loadSharedFile(std::string path, unsigned int pieceS
 {
 	std::ifstream fin(path.c_str(), std::ifstream::in);
 	if (!fin.is_open()) {
-		throw std::runtime_error("could not open common config at " +
+		throw std::runtime_error("could not open file at " +
                         path);
 	}
 
@@ -240,4 +240,27 @@ unsigned char** FileSystem::loadSharedFile(std::string path, unsigned int pieceS
 	}
 
 	return out;
+}
+
+bool FileSystem::writeSharedFile
+(std::string path, unsigned char** file, unsigned int size, unsigned int count)
+{
+	std::ofstream fout;
+	fout.open(path, std::ofstream::out);
+	if (!fout.is_open()) {
+		std::cout << "error: File will not be written to disk. "
+			"Could not open path: " << path << std::endl;
+		return false;
+	}
+
+	for (int i = 0; i < count; ++i) {
+		if (file[i] == NULL)
+			continue;
+
+		for (int j = 0; j < size; ++j)
+			fout << file[i][j];
+	}
+
+	fout.close();
+	return true;
 }

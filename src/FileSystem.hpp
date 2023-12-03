@@ -29,6 +29,11 @@ public:
 	 * cannot be opened.
 	 */
 	static unsigned char** loadSharedFile(std::string path, unsigned int pieceSize);
+
+
+	// Dump the file to the specified path.
+	static bool writeSharedFile(std::string path, unsigned char** file,
+                unsigned int size, unsigned int count);
 };
 
 #endif // CNT4007_FILESYSTEM_HPP

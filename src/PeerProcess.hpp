@@ -36,6 +36,7 @@ private:
 	ConfigCommon            cfgCommon;
 	unsigned int            numPieces;
 	std::vector<ConfigPeer> cfgPeers;
+	bool                    selfHasFile;
 
 	/*
 	 * PeerInterface defines the API that is made available to

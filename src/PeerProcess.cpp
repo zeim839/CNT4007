@@ -12,11 +12,10 @@ PeerProcess::PeerProcess(unsigned int peerid)
 
 	// Initialize peer table.
 	bool foundSelf = false;
-	bool selfHasFile = false;
 	for (auto itr = this->cfgPeers.begin(); itr != this->cfgPeers.end(); ++itr) {
 		if (itr->peerid == this->peerid) {
 			foundSelf = true;
-			selfHasFile = itr->hasFile;
+			this->selfHasFile = itr->hasFile;
 			this->port = itr->port;
 			continue;
 		}
@@ -40,7 +39,10 @@ PeerProcess::PeerProcess(unsigned int peerid)
 
 	if (selfHasFile) {
 		this->selfFinished = true;
-		this->file = FileSystem::loadSharedFile(this->cfgCommon.fileName,
+		std::string fileName = std::to_string(this->peerid) +
+			"/" + this->cfgCommon.fileName;
+
+		this->file = FileSystem::loadSharedFile(fileName,
                         this->cfgCommon.pieceSize);
 	}
 
@@ -99,7 +101,6 @@ PeerProcess::PeerProcess(unsigned int peerid)
 
 	// Finished. Start cleanup.
 	std::cout << "TERMINATING..." << std::endl;
-	this->terminate();
 }
 
 PeerProcess::~PeerProcess()
@@ -623,7 +624,7 @@ void PeerProcess::requestedPiece(unsigned int peerid, unsigned int filePiece)
 
 	unsigned char piece[4 + this->cfgCommon.pieceSize];
 	memcpy(piece, &filePiece, 4);
-	memcpy(piece + 4, this->file + filePiece, sizeof(piece));
+	memcpy(piece + 4, this->file[filePiece], this->cfgCommon.pieceSize);
 	std::string pieceStr((const char*)piece, 4 + this->cfgCommon.pieceSize);
 
 	this->peerTable[peerid].cntrl->sendPiece(pieceStr);
@@ -744,8 +745,36 @@ bool PeerProcess::isFinished()
 
 void PeerProcess::terminate()
 {
-	// TODO: dump file to disk.
-	// TODO: deallocate memory.
+	this->mu.lock();
+
+	// Close peer connections.
+	for (auto i = this->peerTable.begin(); i != this->peerTable.end(); ++i) {
+		if (i->second.cntrl)
+			i->second.cntrl->close();
+	}
+
+	// Write the file to the peer's directory.
+	if (!this->selfHasFile && this->selfFinished) {
+		std::string fileName = std::to_string(this->peerid) +
+			"/" + this->cfgCommon.fileName;
+
+		FileSystem::writeSharedFile(fileName, this->file,
+                        this->cfgCommon.pieceSize, this->numPieces);
+	}
+
+	// Delete file from memory.
+	for (unsigned int i = 0; i < this->numPieces; ++i) {
+		if (this->file[i] != NULL)
+			delete[] this->file[i];
+	}
+	delete[] this->file;
+
+	// Delete peer connections (after some delay).
+	for (auto i = this->peerTable.begin(); i != this->peerTable.end(); ++i) {
+		delete i->second.cntrl;
+	}
+
+	this->mu.unlock();
 }
 
 void PeerProcess::broadcastHavePiece(unsigned int piece)
