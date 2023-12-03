@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <stack>
 #include <sys/stat.h>
+#include <time.h>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 

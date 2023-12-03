@@ -85,15 +85,17 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	this->thDownloader = std::thread(&PeerProcess::download, this);
 
 	// TODO: Start optimistic peer thread.
-  this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
+  	this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
 
 	// TODO: start unchoke peers thread.
+	this->thUnchokePeers = std::thread(&PeerProcess::UnchokePeers, this);
 
 	// Wait for child threads.
 	this->thServer.join();
 	this->thDiscover.join();
 	this->thOptimistic.join();
 	this->thDownloader.join();
+	this->thUnchokePeers.join();
 
 	// Finished. Start cleanup.
 	std::cout << "TERMINATING..." << std::endl;
@@ -262,7 +264,6 @@ void PeerProcess::optimistic()
         	    interestedChoked.push_back(&it->second);
         	}
 		}
-		this->mu.unlock();
 
 		// if no interested choked peers sleep
 		if (interestedChoked.empty()) {
@@ -281,13 +282,11 @@ void PeerProcess::optimistic()
 		}
 
 		// checks if optimisticPeer is a preferredPeer and if not chokes it
-		this->mu.lock();
 		auto it = std::find(this->preferredPeers.begin(), this->preferredPeers.end(), 
 			optimisticPeer);
 		if (!optimisticPeer->isChoked && it == this->preferredPeers.end()) {
 			optimisticPeer->cntrl->sendChoke();
 		}
-		this->mu.unlock();
 
 		optimisticPeer = interestedChoked[index];
 
@@ -296,6 +295,111 @@ void PeerProcess::optimistic()
 		&& optimisticPeer->isInterested) {
 			optimisticPeer->cntrl->sendUnchoke();
 		}
+
+		this->mu.unlock();
+	}
+}
+
+void PeerProcess::UnchokePeers()
+{
+	this->mu.lock();
+	// puts peers into preferred using unordered map
+	auto it = peerTable.begin();
+	while (preferredPeers.size() < this->cfgCommon.numberOfPreferredNeighbors
+	 && it != peerTable.end()) {
+		preferredPeers.push_back(&it->second);
+		++it;
+	}
+	this->mu.unlock();
+
+	while(!this->isFinished()) {
+
+		std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon.unchokingInterval));
+
+		// locks mutex for writing to preferred peers and reading peer table
+		this->mu.lock();
+
+		// copies peer vectors to check who is removed
+		std::vector<PeerTableEntry* > oldPreferred(preferredPeers);
+		preferredPeers.clear();
+
+		if (this->selfFinished) {
+			
+			// gets all peers into vector
+			std::vector<PeerTableEntry*> randomPeerVector;
+			for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
+				randomPeerVector.push_back(&it->second);
+			}
+
+			// suffles vector random amount
+			std::random_device rd;
+			std::mt19937 gen(rd());
+    		std::shuffle(randomPeerVector.begin(), randomPeerVector.end(), gen);
+
+			for (unsigned int i = 0; i < this->cfgCommon.numberOfPreferredNeighbors; ++i) {
+				if (preferredPeers.size() < this->cfgCommon.numberOfPreferredNeighbors
+				 && randomPeerVector[i]->isInterested) {
+					preferredPeers.push_back(randomPeerVector[i]);
+				}
+			}
+
+			this->mu.unlock();
+			continue;
+		}
+
+		for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
+
+			// if the preferred peers vector too small
+			// once local has whole this picks preferred
+			if (preferredPeers.size() < this->cfgCommon.numberOfPreferredNeighbors
+			 && it->second.isInterested) {
+				preferredPeers.push_back(&it->second);
+
+				// resort each time another is added
+				std::sort(preferredPeers.begin(), preferredPeers.end(),
+				[](PeerTableEntry* a, PeerTableEntry* b){
+					return a->bytesReceived > b->bytesReceived;
+				});
+
+				continue;
+			}
+
+			if (preferredPeers.back()->bytesReceived < it->second.bytesReceived
+			 && it->second.isInterested) {
+				
+				// removes last entry and places new
+				preferredPeers.pop_back();
+				preferredPeers.push_back(&it->second);
+
+				std::sort(preferredPeers.begin(), preferredPeers.end(),
+				[](PeerTableEntry* a, PeerTableEntry* b){
+					return a->bytesReceived > b->bytesReceived;
+				});
+			}
+		}
+
+		// resetting bytes
+		for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
+			it->second.bytesReceived = 0;
+		}
+
+		// for each of the old preferred peers
+		for (unsigned int i = 0; i < oldPreferred.size(); ++i) {
+			if (std::find(preferredPeers.begin(), preferredPeers.end(), oldPreferred[i]) 
+			== preferredPeers.end() && !oldPreferred[i]->isChoked) {
+				
+				oldPreferred[i]->cntrl->sendChoke();
+			}
+		}
+
+		// unchoking new preferred
+		for (unsigned int i = 0; i < preferredPeers.size(); ++i) {
+			if (preferredPeers[i]->isChoked) {
+				preferredPeers[i]->cntrl->sendUnchoke();
+			}
+		}
+
+		this->mu.unlock();
 	}
 }
 

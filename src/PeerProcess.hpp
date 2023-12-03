@@ -56,6 +56,7 @@ private:
 	void discover();
 	void optimistic();
 	void download();
+	void UnchokePeers();
 
 	// Threads.
 	std::thread thServer;
