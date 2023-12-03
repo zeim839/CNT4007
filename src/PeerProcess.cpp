@@ -78,29 +78,30 @@ PeerProcess::PeerProcess(unsigned int peerid)
         // Start server thread.
 	this->thServer = std::thread(&PeerProcess::server, this);
 
-	// TODO: Start discovery thread.
+	// Start discovery thread.
 	this->thDiscover = std::thread(&PeerProcess::discover, this);
 
-	this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
+	// Start downloader thread.
+	this->thDownloader = std::thread(&PeerProcess::download, this);
+
+	// TODO: Start optimistic peer thread.
+  this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
 
 	// TODO: start unchoke peers thread.
-
-	// TODO: start downloader thread.
-	// TODO: (downloader) Make sure we're not being choked
 
 	// Wait for child threads.
 	this->thServer.join();
 	this->thDiscover.join();
 	this->thOptimistic.join();
+	this->thDownloader.join();
 
 	// Finished. Start cleanup.
+	std::cout << "TERMINATING..." << std::endl;
 	this->terminate();
 }
 
 PeerProcess::~PeerProcess()
-{
-	// TODO
-}
+{ this->terminate(); }
 
 void PeerProcess::server()
 {
@@ -114,6 +115,11 @@ void PeerProcess::server()
 	int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
 	if (serverSocket < 0)
 		throw std::runtime_error("could not establish server socket");
+
+	if (fcntl(serverSocket, F_SETFL, O_NONBLOCK) < 0) {
+		::close(serverSocket);
+		throw std::runtime_error("could not establish server socket");
+	}
 
 	// Bind socket to local address.
 	int bindStatus = bind(serverSocket, (struct sockaddr*)&servAddr,
@@ -388,6 +394,79 @@ void PeerProcess::xchgHandshakes(int socket)
 	this->mu.unlock();
 }
 
+void PeerProcess::download()
+{
+	std::unordered_map<unsigned int, unsigned int> piecePeer;
+	std::unordered_map<unsigned int, unsigned int> peerPiece;
+	while (!this->isFinished()) {
+		if (this->interesting.empty())
+			continue;
+
+		// Try to identify as many interesting pieces as
+		// possible.
+		this->mu.lock();
+		std::stack<std::pair<unsigned int, unsigned int>> putBack;
+		while(this->interesting.size()) {
+			std::pair<unsigned int, unsigned int> intPiece = this->interesting.top();
+			this->interesting.pop();
+
+			// Already have piece or we don't know the peer.
+			if (this->file[intPiece.second] ||
+			    !this->peerTable.contains(intPiece.first))
+				continue;
+
+			putBack.push(intPiece);
+
+			// Cannot download.
+			if (!this->peerTable[intPiece.first].cntrl ||
+			    this->peerTable[intPiece.first].isChoking) {
+				continue;
+			}
+
+			// Piece is already being downloaded.
+			if (piecePeer.contains(intPiece.second)) {
+				continue;
+			}
+
+			// Already requested peer.
+			if (peerPiece.contains(intPiece.first)) {
+				continue;
+			}
+
+			// Request piece.
+			piecePeer[intPiece.second] = intPiece.first;
+			peerPiece[intPiece.first] = intPiece.second;
+			this->peerTable[intPiece.first].cntrl->sendRequest(intPiece.second);
+		}
+
+		// Put back interesting pieces.
+		while(putBack.size()) {
+			this->interesting.push(putBack.top());
+			putBack.pop();
+		}
+
+		this->mu.unlock();
+
+		/*
+		 * We assume a download rate of 50KBps from each peer
+		 * and attempt to calculate the average download time
+		 * for each piece, with a minimum of 3s and a maximum
+		 * of 15s.
+		 */
+		int secondsAvg = this->cfgCommon.pieceSize / 20000;
+		int wait = secondsAvg;
+
+		if (wait < 1)       wait = 3;
+		else if (wait > 15) wait = 15;
+
+		std::this_thread::sleep_for(std::chrono::seconds(wait));
+
+		// Release locks and try to download more pieces.
+		peerPiece.clear();
+		piecePeer.clear();
+	}
+}
+
 void PeerProcess::setIsChoking(unsigned int peerid, bool isChoking)
 {
 	this->mu.lock();
@@ -415,8 +494,10 @@ void PeerProcess::setPeerHas(unsigned int peerid, unsigned int filepiece)
 	}
 
 	this->peerTable[peerid].bitmap[filepiece] = true;
-	if (!this->file[filepiece])
+	if (!this->file[filepiece]) {
+		this->interesting.push(std::make_pair(peerid, filepiece));
 		this->peerTable[peerid].cntrl->sendInterested();
+	}
 
 	this->mu.unlock();
 }
@@ -431,14 +512,17 @@ void PeerProcess::setBitfield(unsigned int peerid, std::string bitfield)
 
 	unsigned int i = 0;
 	bool isInteresting = false;
-	for (auto itr = bitfield.begin(); itr != bitfield.end(); ++itr) {
+	for (auto itr = bitfield.begin(); (itr != bitfield.end() && i < this->numPieces); ++itr) {
 		for (int k = 0; k < 8; ++k) {
 			unsigned char bit = (unsigned char)(*itr) & (1 << (7-k));
-			this->peerTable[peerid].bitmap[i] = (bit == 1);
+			this->peerTable[peerid].bitmap[i] = bit;
 			if (this->peerTable[peerid].bitmap[i] && !this->file[i]) {
+				this->interesting.push(std::make_pair(peerid, i));
 				isInteresting = true;
 			}
-			++i;
+
+			if (++i == this->numPieces)
+				break;
 		}
 	}
 
@@ -461,9 +545,10 @@ void PeerProcess::requestedPiece(unsigned int peerid, unsigned int filePiece)
 		return;
 	}
 
-	unsigned char piece[this->cfgCommon.pieceSize];
-	memcpy(piece, this->file + filePiece, sizeof(piece));
-	std::string pieceStr((const char*)piece);
+	unsigned char piece[4 + this->cfgCommon.pieceSize];
+	memcpy(piece, &filePiece, 4);
+	memcpy(piece + 4, this->file + filePiece, sizeof(piece));
+	std::string pieceStr((const char*)piece, 4 + this->cfgCommon.pieceSize);
 
 	this->peerTable[peerid].cntrl->sendPiece(pieceStr);
 	this->mu.unlock();
@@ -481,7 +566,7 @@ void PeerProcess::receivedPiece(unsigned int peerid, std::string piece)
 	unsigned char* pieceRaw = (unsigned char*)piece.c_str();
 	unsigned int pieceNum;
 	memcpy(&pieceNum, pieceRaw, 4);
-	if (this->file[pieceNum]) {
+	if (pieceNum >= this->numPieces || this->file[pieceNum]) {
 		this->mu.unlock();
 		return;
 	}
@@ -489,6 +574,10 @@ void PeerProcess::receivedPiece(unsigned int peerid, std::string piece)
 	unsigned char* dynPiece = new unsigned char[this->cfgCommon.pieceSize];
 	memcpy(&dynPiece, pieceRaw + 4, this->cfgCommon.pieceSize);
 	this->file[pieceNum] = dynPiece;
+
+	this->peerTable[peerid].bytesReceived +=
+		this->cfgCommon.pieceSize;
+
 	this->mu.unlock();
 
 	// Broadcast that we have received a piece.
@@ -580,7 +669,8 @@ bool PeerProcess::isFinished()
 
 void PeerProcess::terminate()
 {
-	// TODO.
+	// TODO: dump file to disk.
+	// TODO: deallocate memory.
 }
 
 void PeerProcess::broadcastHavePiece(unsigned int piece)

@@ -26,6 +26,8 @@
 #include <random>
 #include <chrono>
 #include <algorithm>
+#include <stack>
+#include <sys/stat.h>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 
