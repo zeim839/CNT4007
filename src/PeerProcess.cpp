@@ -91,6 +91,7 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	// Wait for child threads.
 	this->thServer.join();
 	this->thDiscover.join();
+	this->thOptimistic.join();
 
 	// Finished. Start cleanup.
 	this->terminate();
