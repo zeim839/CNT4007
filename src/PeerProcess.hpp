@@ -13,8 +13,9 @@ struct PeerTableEntry
 	unsigned int port          = 0;
 	bool         isFinished    = false;
 	bool         isChoking     = false;
-	bool         isInterested  = false;
+	bool         isInterested  = true;
 	bool         isChoked      = true;
+	bool         isPreferred   = false;
 	unsigned int bytesReceived = 0;
 
 	PeerController* cntrl = NULL;
@@ -48,7 +49,6 @@ private:
 	bool selfFinished = false;
 	std::stack<std::pair<unsigned int, unsigned int>> interesting;
 	std::unordered_map<unsigned int, PeerTableEntry> peerTable;
-	std::vector<PeerTableEntry *> preferredPeers;
 	// --------------------------
 
 	// Concurrent routines.
@@ -56,13 +56,13 @@ private:
 	void discover();
 	void optimistic();
 	void download();
-	void UnchokePeers();
+	void selectPreferred();
 
 	// Threads.
 	std::thread thServer;
 	std::thread thDiscover;
 	std::thread thOptimistic;
-	std::thread thUnchokePeers;
+	std::thread thSelectPreferred;
 	std::thread thDownloader;
 
 	// API.

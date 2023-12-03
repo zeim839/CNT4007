@@ -45,8 +45,8 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	}
 
 	// Calculate upper boundary of number of pieces.
-	this->numPieces = ((float)this->cfgCommon.fileSize /
-                (float)this->cfgCommon.pieceSize) + 0.5f;
+	this->numPieces = std::ceil(((float)this->cfgCommon.fileSize /
+                (float)this->cfgCommon.pieceSize));
 
 	// Initialize file.
 	this->file = (!this->file) ? new unsigned char*[this->numPieces]
@@ -81,21 +81,21 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	// Start discovery thread.
 	this->thDiscover = std::thread(&PeerProcess::discover, this);
 
+	// Start optimistic peer thread.
+	this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
+
+	// Start unchoke peers thread.
+	this->thSelectPreferred = std::thread(&PeerProcess::selectPreferred, this);
+
 	// Start downloader thread.
 	this->thDownloader = std::thread(&PeerProcess::download, this);
-
-	// TODO: Start optimistic peer thread.
-  	this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
-
-	// TODO: start unchoke peers thread.
-	this->thUnchokePeers = std::thread(&PeerProcess::UnchokePeers, this);
 
 	// Wait for child threads.
 	this->thServer.join();
 	this->thDiscover.join();
 	this->thOptimistic.join();
 	this->thDownloader.join();
-	this->thUnchokePeers.join();
+	this->thSelectPreferred.join();
 
 	// Finished. Start cleanup.
 	std::cout << "TERMINATING..." << std::endl;
@@ -132,8 +132,8 @@ void PeerProcess::server()
                         " port and hostname");
 	}
 
-	// Maintain up to 5 incoming connection requests at a time.
-	listen(serverSocket, 5);
+	// Maintain up to 30 incoming connection requests at a time.
+	listen(serverSocket, 30);
 
 	while (!this->isFinished()) {
 		sockaddr_in inAddr;
@@ -152,10 +152,7 @@ void PeerProcess::discover()
 {
 	while(!this->isFinished()) {
 		for (auto i = cfgPeers.begin(); i != cfgPeers.end(); ++i) {
-			/*
-			 * We are iterating cfgPeers, so expect to see
-			 * our current peer.
-			 */
+			// cfgPeers, so expect local peer.
 			if (i->peerid == this->peerid)
 				continue;
 
@@ -163,12 +160,19 @@ void PeerProcess::discover()
 				continue;
 
 			if (this->peerTable[i->peerid].cntrl) {
+
+				// Peer disconnected.
 				if (this->peerTable[i->peerid].cntrl->isClosed()) {
 					this->mu.lock();
 					delete this->peerTable[i->peerid].cntrl;
-					this->peerTable[i->peerid].cntrl = NULL;
+					this->peerTable[i->peerid].isChoking     = false;
+					this->peerTable[i->peerid].isChoked      = true;
+					this->peerTable[i->peerid].isPreferred   = false;
+					this->peerTable[i->peerid].bytesReceived = 0;
+					this->peerTable[i->peerid].cntrl         = NULL;
 					this->mu.unlock();
 				}
+
 				continue;
 			}
 
@@ -193,6 +197,7 @@ void PeerProcess::discover()
 			addr.sin_family = AF_INET;
 			bcopy((char*)info->h_addr, (char*)&addr.sin_addr.s_addr,
 			      info->h_length);
+
 			addr.sin_port = htons(i->port);
 
 			// Connect to server.
@@ -246,201 +251,109 @@ void PeerProcess::discover()
 
 void PeerProcess::optimistic()
 {
-	PeerTableEntry *optimisticPeer = nullptr;
-	
+	int optimisticPeerid = -1;
 	while(!this->isFinished()) {
-
-		// sleep
-		if (optimisticPeer != nullptr) {
-			std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon
-				.optimisticUnchokingInterval));
+		if (optimisticPeerid >= 0) {
+			std::this_thread::sleep_for(std::chrono::seconds
+                                (this->cfgCommon.optimisticUnchokingInterval));
 		}
 
-		// vector of choked and interested peers
 		this->mu.lock();
-		std::vector<PeerTableEntry *> interestedChoked;
-        for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
-        	if (it->second.isChoked && it->second.isInterested) {
-        	    interestedChoked.push_back(&it->second);
-        	}
-		}
-
-		// if no interested choked peers sleep
-		if (interestedChoked.empty()) {
-			continue;
-		}
-
-		// randomly pick interested choked peer
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::uniform_int_distribution<size_t> dist(0, interestedChoked.size() - 1);
-		size_t index = dist(gen);
-
-		// if current optPeer is different from new pick again
-		if (optimisticPeer == interestedChoked[index]) {
-			continue;
-		}
-
-		// checks if optimisticPeer is a preferredPeer and if not chokes it
-		auto it = std::find(this->preferredPeers.begin(), this->preferredPeers.end(), 
-			optimisticPeer);
-		if (!optimisticPeer->isChoked && it == this->preferredPeers.end()) {
-			optimisticPeer->cntrl->sendChoke();
-		}
-
-		optimisticPeer = interestedChoked[index];
-
-		// unchokes peer for interval
-		if (optimisticPeer!= nullptr && optimisticPeer->isChoked 
-		&& optimisticPeer->isInterested) {
-			optimisticPeer->cntrl->sendUnchoke();
-		}
-
-		this->mu.unlock();
-	}
-}
-
-void PeerProcess::UnchokePeers()
-{
-	this->mu.lock();
-	// puts peers into preferred using unordered map 
-	// not sure if this is "random" but it only happens once
-	// if not we can change it to whats inside the while when selfFinished
-	{
-		auto it = peerTable.begin();
-		while (preferredPeers.size() < this->cfgCommon.numberOfPreferredNeighbors
-	 	&& it != peerTable.end()) {
-			preferredPeers.push_back(&it->second);
-			++it;
-		}
-
-		// unchoking new preferred
-		for (unsigned int i = 0; i < preferredPeers.size(); ++i) {
-			if (preferredPeers[i]->isChoked) {
-				preferredPeers[i]->cntrl->sendUnchoke();
+		std::vector<unsigned int> candidates;
+		for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
+			if (it->second.isChoked && it->second.isInterested &&
+			    !it->second.isPreferred && it->second.cntrl) {
+				candidates.push_back(it->second.peerid);
 			}
 		}
-	}
-	this->mu.unlock();
 
-	while(!this->isFinished()) {
-		// sleep
-		std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon.unchokingInterval));
-
-		// locks mutex for writing to preferred peers and reading peer table
-		this->mu.lock();
-		std::vector<PeerTableEntry *> oldPreferred(preferredPeers);
-
-
-
-		if (this->selfFinished) {
-			
-			// gets all peers into vector
-			std::vector<PeerTableEntry*> allPeers;
-			for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
-				allPeers.push_back(&it->second);
-			}
-
-			// suffles vector random amount
-			std::random_device rd;
-			std::mt19937 gen(rd());
-    		std::shuffle(allPeers.begin(), allPeers.end(), gen);
-
-			for (unsigned int i = 0; i < this->cfgCommon.numberOfPreferredNeighbors; ++i) {
-				if (preferredPeers.size() > this->cfgCommon.numberOfPreferredNeighbors) {
-					break;
-				}
-
-				if (allPeers[i]->isInterested) {
-					preferredPeers.push_back(allPeers[i]);
-				}
-			}
-
-			// choking unChoking
-			// for each of the old preferred peers
-			for (unsigned int i = 0; i < oldPreferred.size(); ++i) {
-				if (std::find(preferredPeers.begin(), preferredPeers.end(), oldPreferred[i]) 
-				== preferredPeers.end() && !oldPreferred[i]->isChoked) {
-					oldPreferred[i]->cntrl->sendChoke();
-				}
-			}
-
-			// unchoking new preferred
-			for (unsigned int i = 0; i < preferredPeers.size(); ++i) {
-				if (preferredPeers[i]->isChoked) {
-					preferredPeers[i]->cntrl->sendUnchoke();
-				}
-			}
+		// If no candidates, reuse the old optimistic peer.
+		if (candidates.empty()) {
 			this->mu.unlock();
 			continue;
 		}
 
+		// Randomly pick optimistic peer.
+		::srand((unsigned)time(NULL));
+		size_t index = rand() % candidates.size();
 
+		// Choke old peer, if its not preferred.
+		if (this->peerTable.contains(optimisticPeerid) &&
+		    !this->peerTable[optimisticPeerid].isPreferred) {
 
-		for (auto prefPeer : preferredPeers) {
-			// if peer is not interested anymore remove it
-			if (!prefPeer->isInterested) {
-				// finds and erases uninterested preferred peer
-				preferredPeers.erase(std::find(preferredPeers.begin(), preferredPeers.end(), 
-				prefPeer));
+			this->peerTable[optimisticPeerid].isChoked = true;
+			if (this->peerTable[optimisticPeerid].cntrl) {
+				this->peerTable[optimisticPeerid].cntrl->sendChoke();
 			}
 		}
 
-		for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
-			
-			// if aready preferred peer continue
-			if (std::find(preferredPeers.begin(), preferredPeers.end(), &it->second)
-			!= preferredPeers.end()) {
-				continue;
-			}
+		optimisticPeerid = candidates[index];
 
-			// replaces uninterested peers
-			if (preferredPeers.size() < this->cfgCommon.numberOfPreferredNeighbors
-			&& it->second.isInterested) {
-				preferredPeers.push_back(&it->second);
+		// Unchokes new optimistic peer.
+		std::cout << "selected new optimistic peer: " << optimisticPeerid << std::endl;
+		this->peerTable[optimisticPeerid].isChoked = false;
+		this->peerTable[optimisticPeerid].cntrl->sendUnchoke();
+		this->mu.unlock();
+	}
+}
+
+void PeerProcess::selectPreferred()
+{
+	std::unordered_map<unsigned int, bool> oldSelected;
+	while (!this->isFinished()) {
+		std::this_thread::sleep_for(std::chrono::seconds
+                        (this->cfgCommon.unchokingInterval));
+
+		this->mu.lock();
+
+		// Calculate rates.
+		std::vector<float> rates;
+		std::unordered_map<float, std::vector<PeerTableEntry>> peersByRate;
+		for (auto i = this->peerTable.begin(); i != this->peerTable.end(); ++i) {
+			if (!i->second.cntrl || !i->second.isInterested || i->second.isFinished)
 				continue;
-			}
-			
-			// checks if current peer sent more bytes an any of the preferred peers
-			for (PeerTableEntry *prefPeer : preferredPeers) {
-				
-				if (it->second.bytesReceived < prefPeer->bytesReceived
-				|| !it->second.isInterested) {
-					continue;
+
+			float rate = i->second.bytesReceived /
+				this->cfgCommon.unchokingInterval;
+
+			peersByRate[rate].push_back(i->second);
+			rates.push_back(rate);
+		}
+
+		// Sort rates in descending order.
+		std::sort(rates.begin(), rates.end(), std::greater<float>());
+
+		unsigned int count = 0;
+		std::unordered_map<unsigned int, bool> selected;
+		for (auto i = rates.begin(); (i != rates.end() &&
+                        count < this->cfgCommon.numberOfPreferredNeighbors); ++i) {
+
+			std::vector<PeerTableEntry> peers = peersByRate[*i];
+			for (auto j = peers.begin(); (j != peers.end() &&
+                                count < this->cfgCommon.numberOfPreferredNeighbors); ++j) {
+
+				selected[j->peerid] = true;
+				oldSelected[j->peerid] = false;
+
+				if (this->peerTable[j->peerid].isChoked) {
+					this->peerTable[j->peerid].cntrl->sendUnchoke();
 				}
-			
-				// sorts the preferred by bytes sent
-				std::sort(preferredPeers.begin(), preferredPeers.end(),
-				[](PeerTableEntry* a, PeerTableEntry* b){
-					return a->bytesReceived > b->bytesReceived;
-				});
 
-				preferredPeers.pop_back();
-				preferredPeers.push_back(&it->second);
+				std::cout << "selected new preferred peer: " << j->peerid << std::endl;
+				this->peerTable[j->peerid].isChoked = false;
+				++count;
 			}
 		}
 
-
-		// resetting bytes
-		for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
-			it->second.bytesReceived = 0;
-		}
-
-		// for each of the old preferred peers
-		for (unsigned int i = 0; i < oldPreferred.size(); ++i) {
-			if (std::find(preferredPeers.begin(), preferredPeers.end(), oldPreferred[i]) 
-			== preferredPeers.end() && !oldPreferred[i]->isChoked) {
-				oldPreferred[i]->cntrl->sendChoke();
+		// Choke old peers.
+		for (auto i = oldSelected.begin(); i != oldSelected.end(); ++i) {
+			if (i->second && this->peerTable[i->first].cntrl) {
+				this->peerTable[i->first].isChoked = true;
+				this->peerTable[i->first].cntrl->sendChoke();
 			}
 		}
 
-		// unchoking new preferred
-		for (unsigned int i = 0; i < preferredPeers.size(); ++i) {
-			if (preferredPeers[i]->isChoked) {
-				preferredPeers[i]->cntrl->sendUnchoke();
-			}
-		}
-
+		oldSelected = selected;
 		this->mu.unlock();
 	}
 }
@@ -487,7 +400,7 @@ void PeerProcess::xchgHandshakes(int socket)
 	// Marshall message.
 	HandshakeMsg inHsMsg;
 	inHsMsg.header = std::string((const char*)buffer, 18);
-	memcpy(&inHsMsg.zeros, buffer + 18, 10);
+	memcpy(inHsMsg.zeros, buffer + 18, 10);
 
 	// Last 4 bytes are the integer representation (i.e. string).
 	std::string peeridStr((const char*)buffer + 28, 4);
@@ -546,12 +459,15 @@ void PeerProcess::download()
 	std::unordered_map<unsigned int, unsigned int> piecePeer;
 	std::unordered_map<unsigned int, unsigned int> peerPiece;
 	while (!this->isFinished()) {
-		if (this->interesting.empty())
+		if (this->interesting.empty()) {
 			continue;
+		}
+
+		this->mu.lock();
+
 
 		// Try to identify as many interesting pieces as
 		// possible.
-		this->mu.lock();
 		std::stack<std::pair<unsigned int, unsigned int>> putBack;
 		while(this->interesting.size()) {
 			std::pair<unsigned int, unsigned int> intPiece = this->interesting.top();
@@ -595,18 +511,21 @@ void PeerProcess::download()
 		this->mu.unlock();
 
 		/*
-		 * We assume a download rate of 50KBps from each peer
+		 * We assume a download rate of 50KBPS from each peer
 		 * and attempt to calculate the average download time
-		 * for each piece, with a minimum of 3s and a maximum
-		 * of 15s.
+		 * for each piece, with a minimum of 300ms and a maximum
+		 * of (unchokingInterval + 5) seconds.
 		 */
-		int secondsAvg = this->cfgCommon.pieceSize / 20000;
-		int wait = secondsAvg;
+		int msAvg = (this->cfgCommon.pieceSize / 20000) * 1000;
+		int wait = msAvg;
 
-		if (wait < 1)       wait = 3;
-		else if (wait > 15) wait = 15;
+		if (msAvg < 500) {
+			wait = 500;
+		} else if (wait > (this->cfgCommon.unchokingInterval + 5) * 1000) {
+			wait = (this->cfgCommon.unchokingInterval + 5) * 1000;
+		}
 
-		std::this_thread::sleep_for(std::chrono::seconds(wait));
+		std::this_thread::sleep_for(std::chrono::milliseconds(wait));
 
 		// Release locks and try to download more pieces.
 		peerPiece.clear();
@@ -657,13 +576,19 @@ void PeerProcess::setBitfield(unsigned int peerid, std::string bitfield)
 		return;
 	}
 
+	/*
+	 * In the event of a reconnection, no assumptions can be made
+	 * on whether the peer is finished.
+	 */
+	this->peerTable[peerid].isFinished = false;
+
 	unsigned int i = 0;
 	bool isInteresting = false;
 	for (auto itr = bitfield.begin(); (itr != bitfield.end() && i < this->numPieces); ++itr) {
 		for (int k = 0; k < 8; ++k) {
 			unsigned char bit = (unsigned char)(*itr) & (1 << (7-k));
 			this->peerTable[peerid].bitmap[i] = bit;
-			if (this->peerTable[peerid].bitmap[i] && !this->file[i]) {
+			if (this->peerTable[peerid].bitmap[i] && this->file[i] == NULL) {
 				this->interesting.push(std::make_pair(peerid, i));
 				isInteresting = true;
 			}
@@ -673,9 +598,13 @@ void PeerProcess::setBitfield(unsigned int peerid, std::string bitfield)
 		}
 	}
 
-	if (isInteresting)
+	if (isInteresting) {
 		this->peerTable[peerid].cntrl->sendInterested();
+		this->mu.unlock();
+		return;
+	}
 
+	this->peerTable[peerid].cntrl->sendUninterested();
 	this->mu.unlock();
 }
 
@@ -687,7 +616,7 @@ void PeerProcess::requestedPiece(unsigned int peerid, unsigned int filePiece)
 		return;
 	}
 
-	if (this->peerTable[peerid].isChoked || !this->file[filePiece]) {
+	if (this->peerTable[peerid].isChoked || this->file[filePiece] == NULL) {
 		this->mu.unlock();
 		return;
 	}
@@ -719,7 +648,7 @@ void PeerProcess::receivedPiece(unsigned int peerid, std::string piece)
 	}
 
 	unsigned char* dynPiece = new unsigned char[this->cfgCommon.pieceSize];
-	memcpy(&dynPiece, pieceRaw + 4, this->cfgCommon.pieceSize);
+	memcpy(dynPiece, pieceRaw + 4, this->cfgCommon.pieceSize);
 	this->file[pieceNum] = dynPiece;
 
 	this->peerTable[peerid].bytesReceived +=
@@ -739,17 +668,16 @@ std::string PeerProcess::getBitfield()
                         "bitfield");
 	}
 
-	unsigned int bytes = ((float)this->numPieces / 8.0f) + 0.5f;
+	unsigned int bytes = std::ceil(((float)this->numPieces / 8.0f));
 	std::string bitfield = "";
 	unsigned char byte = 0;
 	unsigned int j = 0;
 
 	for (unsigned int i = 0; i < this->numPieces; ++i) {
 		if (j == 8) {
-			bitfield.push_back(byte);
+			bitfield += byte;
 			byte = 0;
 			j = 0;
-			continue;
 		}
 
 		byte = (this->file[i]) ? (byte | (1 << (7 - j))) : byte;
@@ -766,10 +694,31 @@ bool PeerProcess::isFinished()
 {
 	this->mu.lock();
 
+	// Check if our peer has all file pieces.
+	bool haveAllPieces = true;
+	for (unsigned int i = 0; (i < this->numPieces && !this->selfFinished); ++i) {
+		if (this->file[i] == NULL) {
+			haveAllPieces = false;
+			break;
+		}
+	}
+
+	if (!haveAllPieces) {
+		this->mu.unlock();
+		return false;
+	}
+
+	if (haveAllPieces && !this->selfFinished) {
+		this->selfFinished = true;
+		for (auto itr = this->peerTable.begin(); itr != this->peerTable.end(); ++itr) {
+			if (itr->second.cntrl) itr->second.cntrl->sendUninterested();
+		}
+	}
+
 	// Check if all peers have the file.
 	bool hasUnfinished = false;
 	for (auto itr = this->peerTable.begin(); itr != this->peerTable.end(); ++itr) {
-		if (itr->second.isFinished)
+		if (itr->second.isFinished || !itr->second.isInterested)
 			continue;
 
 		bool peerHasUnfinished = false;
@@ -789,28 +738,7 @@ bool PeerProcess::isFinished()
 		return false;
 	}
 
-	// Check if our peer has all file pieces.
-	if (this->selfFinished) {
-		this->mu.unlock();
-		return true;
-	}
-
-	bool haveAllPieces = true;
-	for (unsigned int i = 0; i < this->numPieces; ++i) {
-		if (this->file[i] == NULL) {
-			haveAllPieces = false;
-			break;
-		}
-	}
-
-	if (!haveAllPieces) {
-		this->mu.unlock();
-		return false;
-	}
-
-	this->selfFinished = true;
 	this->mu.unlock();
-
 	return true;
 }
 
@@ -830,4 +758,3 @@ void PeerProcess::broadcastHavePiece(unsigned int piece)
 
 	this->mu.unlock();
 }
-
