@@ -81,7 +81,7 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	// TODO: Start discovery thread.
 	this->thDiscover = std::thread(&PeerProcess::discover, this);
 
-	// TODO: Start optimistic peer thread.
+	this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
 
 	// TODO: start unchoke peers thread.
 
