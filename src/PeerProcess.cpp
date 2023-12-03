@@ -85,12 +85,14 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	this->thDownloader = std::thread(&PeerProcess::download, this);
 
 	// TODO: Start optimistic peer thread.
+  this->thOptimistic = std::thread(&PeerProcess::optimistic, this);
 
 	// TODO: start unchoke peers thread.
 
 	// Wait for child threads.
 	this->thServer.join();
 	this->thDiscover.join();
+	this->thOptimistic.join();
 	this->thDownloader.join();
 
 	// Finished. Start cleanup.
@@ -236,6 +238,63 @@ void PeerProcess::discover()
 
 			// Exchange handshakes.
 			this->xchgHandshakes(sout);
+		}
+	}
+}
+
+void PeerProcess::optimistic()
+{
+	PeerTableEntry *optimisticPeer = nullptr;
+	
+	while(!this->isFinished()) {
+
+		// sleep
+		if (optimisticPeer != nullptr) {
+			std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon
+				.optimisticUnchokingInterval));
+		}
+
+		// vector of choked and interested peers
+		this->mu.lock();
+		std::vector<PeerTableEntry *> interestedChoked;
+        for (auto it = peerTable.begin(); it != peerTable.end(); ++it) {
+        	if (it->second.isChoked && it->second.isInterested) {
+        	    interestedChoked.push_back(&it->second);
+        	}
+		}
+		this->mu.unlock();
+
+		// if no interested choked peers sleep
+		if (interestedChoked.empty()) {
+			continue;
+		}
+
+		// randomly pick interested choked peer
+		std::random_device rd;
+		std::mt19937 gen(rd());
+		std::uniform_int_distribution<size_t> dist(0, interestedChoked.size() - 1);
+		size_t index = dist(gen);
+
+		// if current optPeer is different from new pick again
+		if (optimisticPeer == interestedChoked[index]) {
+			continue;
+		}
+
+		// checks if optimisticPeer is a preferredPeer and if not chokes it
+		this->mu.lock();
+		auto it = std::find(this->preferredPeers.begin(), this->preferredPeers.end(), 
+			optimisticPeer);
+		if (!optimisticPeer->isChoked && it == this->preferredPeers.end()) {
+			optimisticPeer->cntrl->sendChoke();
+		}
+		this->mu.unlock();
+
+		optimisticPeer = interestedChoked[index];
+
+		// unchokes peer for interval
+		if (optimisticPeer!= nullptr && optimisticPeer->isChoked 
+		&& optimisticPeer->isInterested) {
+			optimisticPeer->cntrl->sendUnchoke();
 		}
 	}
 }
@@ -624,3 +683,4 @@ void PeerProcess::broadcastHavePiece(unsigned int piece)
 
 	this->mu.unlock();
 }
+

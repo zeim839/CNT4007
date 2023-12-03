@@ -48,11 +48,13 @@ private:
 	bool selfFinished = false;
 	std::stack<std::pair<unsigned int, unsigned int>> interesting;
 	std::unordered_map<unsigned int, PeerTableEntry> peerTable;
+	std::vector<PeerTableEntry *> preferredPeers;
 	// --------------------------
 
 	// Concurrent routines.
 	void server();
 	void discover();
+	void optimistic();
 	void download();
 
 	// Threads.
