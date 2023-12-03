@@ -31,6 +31,7 @@
 #include <random>
 #include <iomanip>
 #include <ctime>
+#include <sstream>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 
