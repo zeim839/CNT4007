@@ -8,13 +8,14 @@
 // PeerTableEntry tracks the state of some foreign peer.
 struct PeerTableEntry
 {
-	unsigned int peerid       = 0;
-	std::string  hostname     = "";
-	unsigned int port         = 0;
-	bool         isFinished   = false;
-	bool         isChoking    = false;
-	bool         isInterested = false;
-	bool         isChoked     = true;
+	unsigned int peerid        = 0;
+	std::string  hostname      = "";
+	unsigned int port          = 0;
+	bool         isFinished    = false;
+	bool         isChoking     = false;
+	bool         isInterested  = false;
+	bool         isChoked      = true;
+	unsigned int bytesReceived = 0;
 
 	PeerController* cntrl = NULL;
 	std::unordered_map<unsigned int, bool> bitmap;
@@ -24,7 +25,7 @@ class PeerProcess
 {
 public:
 	PeerProcess(unsigned int peerid);
-	~PeerProcess(); // TODO
+	~PeerProcess();
 
 private:
 
@@ -45,12 +46,14 @@ private:
 	std::mutex mu;
 	unsigned char** file = NULL;
 	bool selfFinished = false;
+	std::stack<std::pair<unsigned int, unsigned int>> interesting;
 	std::unordered_map<unsigned int, PeerTableEntry> peerTable;
 	// --------------------------
 
 	// Concurrent routines.
 	void server();
 	void discover();
+	void download();
 
 	// Threads.
 	std::thread thServer;
