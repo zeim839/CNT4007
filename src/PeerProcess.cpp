@@ -10,6 +10,12 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	// Load peers.
 	this->cfgPeers = FileSystem::loadPeerConfig("PeerInfo.cfg");
 
+	// Initialize log file.
+	std::string logFilePath = "log_peer_" +
+		std::to_string(this->peerid) + ".log";
+
+	this->log = new Log(logFilePath);
+
 	// Initialize peer table.
 	bool foundSelf = false;
 	for (auto itr = this->cfgPeers.begin(); itr != this->cfgPeers.end(); ++itr) {
@@ -37,18 +43,22 @@ PeerProcess::PeerProcess(unsigned int peerid)
                         std::to_string(this->peerid) + ") in PeerInfo.cfg");
 	}
 
+	// Calculate upper boundary of number of pieces.
+	this->numPieces = std::ceil(((float)this->cfgCommon.fileSize /
+                (float)this->cfgCommon.pieceSize));
+
 	if (selfHasFile) {
 		this->selfFinished = true;
-		std::string fileName = std::to_string(this->peerid) +
+		std::string fileName = "peer_" +
+			std::to_string(this->peerid) +
 			"/" + this->cfgCommon.fileName;
 
 		this->file = FileSystem::loadSharedFile(fileName,
                         this->cfgCommon.pieceSize);
-	}
 
-	// Calculate upper boundary of number of pieces.
-	this->numPieces = std::ceil(((float)this->cfgCommon.fileSize /
-                (float)this->cfgCommon.pieceSize));
+		this->piecesDownloaded = this->numPieces;
+		this->log->LogCompleted(this->peerid);
+	}
 
 	// Initialize file.
 	this->file = (!this->file) ? new unsigned char*[this->numPieces]
@@ -99,6 +109,9 @@ PeerProcess::PeerProcess(unsigned int peerid)
 	this->thDownloader.join();
 	this->thSelectPreferred.join();
 
+	if (!this->selfHasFile)
+		this->log->LogCompleted(this->peerid);
+
 	// Finished. Start cleanup.
 	std::cout << "TERMINATING..." << std::endl;
 }
@@ -145,7 +158,7 @@ void PeerProcess::server()
 		if (inSocket < 0)
 			continue;
 
-		this->xchgHandshakes(inSocket);
+		this->xchgHandshakes(inSocket, false);
 	}
 }
 
@@ -245,7 +258,7 @@ void PeerProcess::discover()
 			fcntl(sout, F_SETFL, 0);
 
 			// Exchange handshakes.
-			this->xchgHandshakes(sout);
+			this->xchgHandshakes(sout, true);
 		}
 	}
 }
@@ -291,10 +304,11 @@ void PeerProcess::optimistic()
 		optimisticPeerid = candidates[index];
 
 		// Unchokes new optimistic peer.
-		std::cout << "selected new optimistic peer: " << optimisticPeerid << std::endl;
 		this->peerTable[optimisticPeerid].isChoked = false;
 		this->peerTable[optimisticPeerid].cntrl->sendUnchoke();
 		this->mu.unlock();
+
+		this->log->LogChangeOptimistic(this->peerid, optimisticPeerid);
 	}
 }
 
@@ -326,6 +340,7 @@ void PeerProcess::selectPreferred()
 
 		unsigned int count = 0;
 		std::unordered_map<unsigned int, bool> selected;
+		std::vector<unsigned int> toLog;
 		for (auto i = rates.begin(); (i != rates.end() &&
                         count < this->cfgCommon.numberOfPreferredNeighbors); ++i) {
 
@@ -340,11 +355,13 @@ void PeerProcess::selectPreferred()
 					this->peerTable[j->peerid].cntrl->sendUnchoke();
 				}
 
-				std::cout << "selected new preferred peer: " << j->peerid << std::endl;
+				toLog.push_back(j->peerid);
 				this->peerTable[j->peerid].isChoked = false;
 				++count;
 			}
 		}
+
+		this->log->LogChangePreferred(this->peerid, toLog);
 
 		// Choke old peers.
 		for (auto i = oldSelected.begin(); i != oldSelected.end(); ++i) {
@@ -360,7 +377,7 @@ void PeerProcess::selectPreferred()
 }
 
 
-void PeerProcess::xchgHandshakes(int socket)
+void PeerProcess::xchgHandshakes(int socket, bool isOut)
 {
 	signal(SIGPIPE, SIG_IGN);
 
@@ -445,6 +462,14 @@ void PeerProcess::xchgHandshakes(int socket)
 		return;
 	}
 
+	if (isOut) {
+		this->log->LogTCPOutgoing(this->peerid,
+                        inHsMsg.peerid);
+	} else {
+		this->log->LogTCPIncoming(this->peerid,
+                        inHsMsg.peerid);
+	}
+
 	this->peerTable[inHsMsg.peerid].cntrl = new PeerController
 		(inHsMsg.peerid, socket, this->ifc);
 
@@ -466,6 +491,19 @@ void PeerProcess::download()
 
 		this->mu.lock();
 
+		// Randomize.
+		std::vector<std::pair<unsigned int, unsigned int>> shuffledInt;
+		while (this->interesting.size()) {
+			shuffledInt.push_back(this->interesting.top());
+			this->interesting.pop();
+		}
+
+		std::shuffle(shuffledInt.begin(), shuffledInt.end(),
+		        std::default_random_engine(0));
+
+		for (auto i = shuffledInt.begin(); i != shuffledInt.end(); ++i) {
+			this->interesting.push(*i);
+		}
 
 		// Try to identify as many interesting pieces as
 		// possible.
@@ -541,6 +579,12 @@ void PeerProcess::setIsChoking(unsigned int peerid, bool isChoking)
 		this->peerTable[peerid].isChoking = isChoking;
 
 	this->mu.unlock();
+
+	if (isChoking) {
+		this->log->LogChoked(this->peerid, peerid);
+	} else {
+		this->log->LogUnchoked(this->peerid, peerid);
+	}
 }
 
 void PeerProcess::setIsInterested(unsigned int peerid, bool isInterested)
@@ -550,6 +594,11 @@ void PeerProcess::setIsInterested(unsigned int peerid, bool isInterested)
 		this->peerTable[peerid].isInterested = isInterested;
 
 	this->mu.unlock();
+
+	MsgType type = (isInterested) ? MsgInterested :
+		MsgUninterested;
+
+	this->log->LogInterest(this->peerid, peerid, type);
 }
 
 void PeerProcess::setPeerHas(unsigned int peerid, unsigned int filepiece)
@@ -567,6 +616,7 @@ void PeerProcess::setPeerHas(unsigned int peerid, unsigned int filepiece)
 	}
 
 	this->mu.unlock();
+	this->log->LogHave(this->peerid, peerid,  filepiece);
 }
 
 void PeerProcess::setBitfield(unsigned int peerid, std::string bitfield)
@@ -655,10 +705,15 @@ void PeerProcess::receivedPiece(unsigned int peerid, std::string piece)
 	this->peerTable[peerid].bytesReceived +=
 		this->cfgCommon.pieceSize;
 
+	this->piecesDownloaded += 1;
+
 	this->mu.unlock();
 
 	// Broadcast that we have received a piece.
 	this->broadcastHavePiece(pieceNum);
+
+	this->log->LogDownloaded(this->peerid, peerid,
+                pieceNum, this->piecesDownloaded);
 }
 
 // WARNING: must be called inside a mutex lock.
@@ -755,7 +810,8 @@ void PeerProcess::terminate()
 
 	// Write the file to the peer's directory.
 	if (!this->selfHasFile && this->selfFinished) {
-		std::string fileName = std::to_string(this->peerid) +
+		std::string fileName = "peer_" +
+			std::to_string(this->peerid) +
 			"/" + this->cfgCommon.fileName;
 
 		FileSystem::writeSharedFile(fileName, this->file,
@@ -774,6 +830,7 @@ void PeerProcess::terminate()
 		delete i->second.cntrl;
 	}
 
+	delete this->log;
 	this->mu.unlock();
 }
 

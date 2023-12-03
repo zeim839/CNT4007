@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <functional>
 #include <fstream>
+#include <ostream>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <iostream>
@@ -28,6 +29,8 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <random>
+#include <iomanip>
+#include <ctime>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 

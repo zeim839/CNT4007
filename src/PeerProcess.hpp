@@ -4,6 +4,7 @@
 #include "Protocol.hpp"
 #include "FileSystem.hpp"
 #include "PeerController.hpp"
+#include "Log.hpp"
 
 // PeerTableEntry tracks the state of some foreign peer.
 struct PeerTableEntry
@@ -48,6 +49,7 @@ private:
 	std::mutex mu;
 	unsigned char** file = NULL;
 	bool selfFinished = false;
+	unsigned int piecesDownloaded = 0;
 	std::stack<std::pair<unsigned int, unsigned int>> interesting;
 	std::unordered_map<unsigned int, PeerTableEntry> peerTable;
 	// --------------------------
@@ -92,7 +94,9 @@ private:
 	void broadcastHavePiece(unsigned int piece);
 
 	// Try to exchange handshakes with the peer at socket.
-	void xchgHandshakes(int socket);
+	void xchgHandshakes(int socket, bool isOut);
+
+	Log* log = NULL;
 };
 
 #endif // CNT4007_PEERPROCESS_HPP
