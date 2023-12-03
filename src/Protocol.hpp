@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <random>
 #include <chrono>
+#include <algorithm>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 

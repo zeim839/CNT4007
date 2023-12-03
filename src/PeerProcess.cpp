@@ -241,6 +241,12 @@ void PeerProcess::optimistic()
 	
 	while(!this->isFinished()) {
 
+		// sleep
+		if (optimisticPeer != nullptr) {
+			std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon
+				.optimisticUnchokingInterval));
+		}
+
 		// vector of choked and interested peers
 		this->mu.lock();
 		std::vector<PeerTableEntry *> interestedChoked;
@@ -253,8 +259,6 @@ void PeerProcess::optimistic()
 
 		// if no interested choked peers sleep
 		if (interestedChoked.empty()) {
-			std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon
-			.optimisticUnchokingInterval));
 			continue;
 		}
 
@@ -269,10 +273,15 @@ void PeerProcess::optimistic()
 			continue;
 		}
 
-		// choke old optimist
-		if (!optimisticPeer->isChoked) {
+
+		// checks if optimisticPeer is a preferredPeer and if not chokes it
+		this->mu.lock();
+		auto it = std::find(this->preferredPeers.begin(), this->preferredPeers.end(), 
+			optimisticPeer);
+		if (!optimisticPeer->isChoked && it == this->preferredPeers.end()) {
 			optimisticPeer->cntrl->sendChoke();
 		}
+		this->mu.unlock();
 
 		optimisticPeer = interestedChoked[index];
 
@@ -280,12 +289,8 @@ void PeerProcess::optimistic()
 		if (optimisticPeer!= nullptr && optimisticPeer->isChoked 
 		&& optimisticPeer->isInterested) {
 			optimisticPeer->cntrl->sendUnchoke();
-			std::this_thread::sleep_for(std::chrono::seconds(this->cfgCommon
-			.optimisticUnchokingInterval));
 		}
 	}
-
-
 }
 
 void PeerProcess::xchgHandshakes(int socket)

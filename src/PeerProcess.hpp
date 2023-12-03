@@ -46,6 +46,7 @@ private:
 	unsigned char** file = NULL;
 	bool selfFinished = false;
 	std::unordered_map<unsigned int, PeerTableEntry> peerTable;
+	std::vector<PeerTableEntry *> preferredPeers;
 	// --------------------------
 
 	// Concurrent routines.
