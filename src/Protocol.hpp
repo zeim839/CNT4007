@@ -23,6 +23,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
+#include <stack>
+#include <sys/stat.h>
 
 #define HANDSHAKE_HEADER "P2PFILESHARINGPROJ"
 
