@@ -273,7 +273,6 @@ void PeerProcess::optimistic()
 			continue;
 		}
 
-
 		// checks if optimisticPeer is a preferredPeer and if not chokes it
 		this->mu.lock();
 		auto it = std::find(this->preferredPeers.begin(), this->preferredPeers.end(), 
