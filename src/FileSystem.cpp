@@ -208,13 +208,17 @@ unsigned char** FileSystem::loadSharedFile(std::string path, unsigned int pieceS
 
 	std::vector<std::string> pieces;
 	std::string currentPiece = "";
+	int c = -1;
 	while(fin.good()) {
+		c = fin.get();
+		if (c == EOF)
+			break;
+		currentPiece.push_back(c);
 		if (currentPiece.size() == pieceSize) {
 			pieces.push_back(currentPiece);
 			currentPiece = "";
 			continue;
 		}
-		currentPiece.push_back(fin.get());
 	}
 
 	if (currentPiece != "") {
