@@ -174,8 +174,10 @@ void Log::LogInterest
 	switch(type) {
 	case MsgInterested:
 		typeStr = "interested";
+		break;
 	case MsgUninterested:
 		typeStr = "not interested";
+		break;
 	default:
 		return;
 	}

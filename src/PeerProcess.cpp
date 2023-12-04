@@ -16,6 +16,10 @@ PeerProcess::PeerProcess(unsigned int peerid)
 
 	this->log = new Log(logFilePath);
 
+	// Make peer directory.
+	std::string peerHomeDir = "peer_" + std::to_string(this->peerid);
+	mkdir(peerHomeDir.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+
 	// Initialize peer table.
 	bool foundSelf = false;
 	for (auto itr = this->cfgPeers.begin(); itr != this->cfgPeers.end(); ++itr) {
@@ -434,6 +438,9 @@ void PeerProcess::xchgHandshakes(int socket, bool isOut)
 		return;
 	}
 
+	std::cout << "Handshake magic from peer " << inHsMsg.peerid << ": "
+		  << inHsMsg.header << std::endl;
+
 	bool allZeros = true;
 	for (int i = 0; i < 10; i++) {
 		if (inHsMsg.zeros[i] != 0) {
@@ -476,6 +483,9 @@ void PeerProcess::xchgHandshakes(int socket, bool isOut)
 	// Send bitfield.
 	this->peerTable[inHsMsg.peerid].cntrl->sendBitfield
 		(this->getBitfield());
+
+	std::cout << "Peer " << this->peerid << " sent bitfield to remote peer "
+		  << inHsMsg.peerid << std::endl;
 
 	this->mu.unlock();
 }
@@ -617,6 +627,10 @@ void PeerProcess::setPeerHas(unsigned int peerid, unsigned int filepiece)
 
 	this->mu.unlock();
 	this->log->LogHave(this->peerid, peerid,  filepiece);
+
+	std::cout << "Received 'have' message from peer " <<
+		peerid << ". Remote peer bitfield index " <<
+		filepiece << " is now set to true." << std::endl;
 }
 
 void PeerProcess::setBitfield(unsigned int peerid, std::string bitfield)
@@ -679,6 +693,9 @@ void PeerProcess::requestedPiece(unsigned int peerid, unsigned int filePiece)
 
 	this->peerTable[peerid].cntrl->sendPiece(pieceStr);
 	this->mu.unlock();
+
+	std::cout << "Sent piece " << filePiece << " to peer " << peerid
+		  << std::endl;
 }
 
 void PeerProcess::receivedPiece(unsigned int peerid, std::string piece)

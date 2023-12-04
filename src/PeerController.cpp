@@ -78,6 +78,9 @@ void PeerController::listen()
 			if (payload.size() <= 0)
 				break;
 
+			std::cout << "Received bitfield from peer: " <<
+				this->peerid << std::endl;
+
 			this->ifc.setBitfield(this->peerid, payload);
 			break;
 		case MsgRequest: {
@@ -120,7 +123,7 @@ bool PeerController::receive(std::string& out, unsigned int size)
 			return false;
 		}
 
-		std::string chunk((const char*)buffer, size);
+		std::string chunk((const char*)buffer, rcvd);
 		out += chunk;
 		remaining -= rcvd;
 	}
@@ -239,6 +242,9 @@ void PeerController::sendRequest(unsigned int filePiece)
 	memcpy(payloadRaw, &filePiece, 4);
 	std::string payload((const char*)payloadRaw, 4);
 	sendMsg(msg, payload);
+
+	std::cout << "Requested piece " << filePiece << " from peer " <<
+		this->peerid << std::endl;
 }
 
 void PeerController::sendPiece(std::string piece)

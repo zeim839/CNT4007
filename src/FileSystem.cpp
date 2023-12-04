@@ -51,6 +51,7 @@ ConfigCommon FileSystem::loadCommonConfig(std::string path)
 	}
 
 	config.numberOfPreferredNeighbors = std::stoi(pair.second);
+	std::cout << "NumberOfPreferredNeighbors: " << config.numberOfPreferredNeighbors << std::endl;
 
 	// Parse UnchokingInterval.
 	pair = getCommonLine(fin);
@@ -65,6 +66,7 @@ ConfigCommon FileSystem::loadCommonConfig(std::string path)
 	}
 
 	config.unchokingInterval = std::stoi(pair.second);
+	std::cout << "UnchokingInterval: " << config.unchokingInterval << std::endl;
 
 	// Parse OptimisticUnchokingInterval.
 	pair = getCommonLine(fin);
@@ -79,6 +81,7 @@ ConfigCommon FileSystem::loadCommonConfig(std::string path)
 	}
 
 	config.optimisticUnchokingInterval = std::stoi(pair.second);
+	std::cout << "OptimisticUnchokingInterval: " << config.optimisticUnchokingInterval << std::endl;
 
 	// Parse file name.
 	pair = getCommonLine(fin);
@@ -88,6 +91,7 @@ ConfigCommon FileSystem::loadCommonConfig(std::string path)
 	}
 
 	config.fileName = pair.second;
+	std::cout << "FileName: " << config.fileName << std::endl;
 
 	// Parse FileSize.
 	pair = getCommonLine(fin);
@@ -102,6 +106,7 @@ ConfigCommon FileSystem::loadCommonConfig(std::string path)
 	}
 
 	config.fileSize = std::stoi(pair.second);
+	std::cout << "FileSize: " << config.fileSize << std::endl;
 
 	// Parse PieceSize.
 	pair = getCommonLine(fin);
@@ -116,6 +121,8 @@ ConfigCommon FileSystem::loadCommonConfig(std::string path)
 	}
 
 	config.pieceSize = std::stoi(pair.second);
+	std::cout << "PieceSize: " << config.pieceSize << std::endl;
+
 	return config;
 }
 
@@ -177,6 +184,10 @@ ConfigPeer getPeerLine(std::ifstream& fin, unsigned int lineNum)
 	}
 
 	peer.hasFile = hasFile;
+
+	std::cout << "PeerInfo.cfg:" << lineNum << ": " << peer.peerid << " " <<
+		peer.hostname << " " << peer.port << " " << peer.hasFile << std::endl;
+
 	return peer;
 }
 
@@ -190,7 +201,7 @@ std::vector<ConfigPeer> FileSystem::loadPeerConfig(std::string path)
 	}
 
 	unsigned int line = 1;
-	while (fin.good()) {
+	while (fin.good() && !fin.eof()) {
 		peers.push_back(getPeerLine(fin, line));
 		++line;
 	}
