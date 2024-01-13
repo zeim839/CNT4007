@@ -63,6 +63,3 @@ The peers that own the file must have the file in their respective directories. 
 | Nicholas Callahan | nicholascallahan@ufl.edu | PeerProcess (optimistic and preferred peer selection)           |
 | Rohith Vellore    | rvellore@ufl.edu         | Logging & Testing           |
 
-## Submission Video
-
-https://1drv.ms/v/s!AirWD0kykA32iqkq1Cp53C0ajwzFug?e=jCVcrR
